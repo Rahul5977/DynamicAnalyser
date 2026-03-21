@@ -50,6 +50,18 @@ class RunNotFoundError(DynamicAnalyserError):
     """Raised when a pipeline run is not found."""
 
 
+class ASTParseError(DynamicAnalyserError):
+    """Raised when tree-sitter fails to parse a source file."""
+
+
+class IndexingError(DynamicAnalyserError):
+    """Raised when code indexing fails."""
+
+
+class CorrelationError(DynamicAnalyserError):
+    """Raised when trace correlation encounters an unrecoverable error."""
+
+
 def to_http_exception(error: DynamicAnalyserError) -> HTTPException:
     """Map domain exceptions to HTTP exceptions."""
     status_map = {
@@ -63,6 +75,9 @@ def to_http_exception(error: DynamicAnalyserError) -> HTTPException:
         DatabaseError: status.HTTP_500_INTERNAL_SERVER_ERROR,
         RepositoryNotFoundError: status.HTTP_404_NOT_FOUND,
         RunNotFoundError: status.HTTP_404_NOT_FOUND,
+        ASTParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+        IndexingError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+        CorrelationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     }
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     for exc_type, code in status_map.items():

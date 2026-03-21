@@ -191,6 +191,35 @@ class GitHubClient:
         except GithubException as e:
             raise self._wrap_exception(e) from e
 
+    def list_tree(self, repo_full_name: str, sha: str) -> list[dict]:
+        """Fetch the full file tree for a repo at a given commit SHA.
+
+        Uses the Git Trees API with recursive=True.
+        Returns list of dicts with keys: path, type, sha, size (blobs only).
+        """
+        try:
+            repo = self._get_repo(repo_full_name)
+            tree = repo.get_git_tree(sha, recursive=True)
+            return [
+                {
+                    "path": item.path,
+                    "type": item.type,
+                    "sha": item.sha,
+                    "size": item.size,
+                }
+                for item in tree.tree
+                if item.type == "blob"
+            ]
+        except (GitHubNotFoundError, GitHubAuthError):
+            raise
+        except RateLimitExceededException as e:
+            raise GitHubRateLimitError(
+                "GitHub API rate limit exceeded",
+                detail="Wait before retrying or use a token with higher limits",
+            ) from e
+        except GithubException as e:
+            raise self._wrap_exception(e) from e
+
     @staticmethod
     def _wrap_exception(e: GithubException) -> GitHubAPIError:
         message = e.data.get("message", str(e)) if isinstance(e.data, dict) else str(e)

@@ -1,4 +1,6 @@
-from sqlalchemy import func, desc
+import json
+
+from sqlalchemy import func, desc, distinct, asc
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.exceptions import (
@@ -7,7 +9,14 @@ from app.core.exceptions import (
     RunNotFoundError,
 )
 from app.core.logging import logger
-from app.models.database import TrackedRepository, PipelineRun, StepTiming
+from app.models.database import (
+    TrackedRepository,
+    PipelineRun,
+    StepTiming,
+    CodeIndex,
+    IndexedFunction,
+    IndexedLogCall,
+)
 
 
 class TrackedRepoRepository:
@@ -177,3 +186,149 @@ class PipelineRunRepository:
             durations = sorted(r[0] for r in rows)
             idx = int(len(durations) * 0.95)
             return durations[min(idx, len(durations) - 1)]
+
+    def get_step_durations_for_repo(
+        self, repo_id: int, step_name: str, last_n: int = 50
+    ) -> list[tuple[int, int]]:
+        """Return (run_id, duration_ms) for a step, ordered oldest→newest."""
+        try:
+            rows = (
+                self.db.query(PipelineRun.id, StepTiming.duration_ms)
+                .join(StepTiming)
+                .filter(
+                    PipelineRun.repository_id == repo_id,
+                    StepTiming.step_name == step_name,
+                )
+                .order_by(desc(PipelineRun.created_at))
+                .limit(last_n)
+                .all()
+            )
+            # Reverse to oldest→newest for trend analysis
+            return list(reversed(rows))
+        except Exception as e:
+            logger.error("Failed to get step durations: %s", e)
+            raise DatabaseError("Failed to get step durations", detail=str(e)) from e
+
+    def get_all_step_names_for_repo(
+        self, repo_id: int, last_n: int = 50
+    ) -> list[str]:
+        """Return distinct step names that appear in the last N runs."""
+        try:
+            # Get the last N run IDs
+            run_ids_subq = (
+                self.db.query(PipelineRun.id)
+                .filter(PipelineRun.repository_id == repo_id)
+                .order_by(desc(PipelineRun.created_at))
+                .limit(last_n)
+                .subquery()
+            )
+            rows = (
+                self.db.query(distinct(StepTiming.step_name))
+                .filter(StepTiming.pipeline_run_id.in_(
+                    self.db.query(run_ids_subq.c.id)
+                ))
+                .all()
+            )
+            return [r[0] for r in rows]
+        except Exception as e:
+            logger.error("Failed to get step names: %s", e)
+            raise DatabaseError("Failed to get step names", detail=str(e)) from e
+
+    def get_latest_total_duration(self, repo_id: int) -> int | None:
+        """Return total_duration_ms of the most recent completed run."""
+        run = (
+            self.db.query(PipelineRun)
+            .filter(
+                PipelineRun.repository_id == repo_id,
+                PipelineRun.total_duration_ms.isnot(None),
+            )
+            .order_by(desc(PipelineRun.created_at))
+            .first()
+        )
+        return run.total_duration_ms if run else None
+
+
+class CodeIndexRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_repo_and_sha(self, repo_id: int, commit_sha: str) -> CodeIndex | None:
+        return (
+            self.db.query(CodeIndex)
+            .filter(
+                CodeIndex.repository_id == repo_id,
+                CodeIndex.commit_sha == commit_sha,
+            )
+            .first()
+        )
+
+    def get_latest_for_repo(self, repo_id: int) -> CodeIndex | None:
+        return (
+            self.db.query(CodeIndex)
+            .filter(
+                CodeIndex.repository_id == repo_id,
+                CodeIndex.status == "completed",
+            )
+            .order_by(desc(CodeIndex.created_at))
+            .first()
+        )
+
+    def create(self, code_index: CodeIndex) -> CodeIndex:
+        try:
+            self.db.add(code_index)
+            self.db.commit()
+            self.db.refresh(code_index)
+            return code_index
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to create code index: %s", e)
+            raise DatabaseError("Failed to create code index", detail=str(e)) from e
+
+    def update_status(
+        self, index_id: int, status: str, error_message: str | None = None,
+        completed_at=None, total_functions: int = 0, total_log_calls: int = 0,
+        language_breakdown: dict | None = None,
+    ):
+        try:
+            idx = self.db.query(CodeIndex).get(index_id)
+            if idx:
+                idx.status = status
+                idx.error_message = error_message
+                idx.completed_at = completed_at
+                idx.total_functions = total_functions
+                idx.total_log_calls = total_log_calls
+                if language_breakdown:
+                    idx.language_breakdown = json.dumps(language_breakdown)
+                self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to update code index status: %s", e)
+            raise DatabaseError("Failed to update code index", detail=str(e)) from e
+
+    def save_functions_and_log_calls(
+        self, index_id: int,
+        functions: list[IndexedFunction],
+        log_calls: list[IndexedLogCall],
+    ):
+        try:
+            for f in functions:
+                f.code_index_id = index_id
+                self.db.add(f)
+            for lc in log_calls:
+                lc.code_index_id = index_id
+                self.db.add(lc)
+            self.db.commit()
+            logger.info(
+                "Saved %d functions and %d log calls for index %d",
+                len(functions), len(log_calls), index_id,
+            )
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to save index data: %s", e)
+            raise DatabaseError("Failed to save index data", detail=str(e)) from e
+
+    def load_index_data(self, code_index: CodeIndex):
+        """Load functions and log_calls for a CodeIndex (eager)."""
+        _ = code_index.functions
+        _ = code_index.log_calls
+        return code_index

@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import DynamicAnalyserError, to_http_exception
 from app.db.repository import PipelineRunRepository
 from app.db.session import get_db
-from app.models.schemas import PipelineRunDetail, IngestionResult
+from app.models.schemas import PipelineRunDetail, IngestionResult, AnnotatedTrace
 from app.services.ingester import LogIngester
+from app.services.trace_correlator import TraceCorrelator
 
 router = APIRouter(prefix="/runs")
 
@@ -34,5 +35,15 @@ def ingest_run(
     try:
         ingester = LogIngester(db)
         return ingester.ingest_run(repo, run_id)
+    except DynamicAnalyserError as e:
+        raise to_http_exception(e) from e
+
+
+@router.get("/{run_id}/trace", response_model=AnnotatedTrace)
+def get_trace(run_id: int = Path(..., ge=1), db: Session = Depends(get_db)):
+    """Return annotated trace with source code locations for a run."""
+    try:
+        correlator = TraceCorrelator(db)
+        return correlator.correlate_run(run_id)
     except DynamicAnalyserError as e:
         raise to_http_exception(e) from e

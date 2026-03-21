@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     SLOW_STEP_THRESHOLD_MS: int = 5000
 
+    AST_INDEX_MAX_FILES: int = 500
+    AST_INDEX_MAX_FILE_SIZE_KB: int = 500
+    FUZZY_MATCH_THRESHOLD: float = 0.85
+    BOTTLENECK_DEFAULT_WINDOW: int = 50
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

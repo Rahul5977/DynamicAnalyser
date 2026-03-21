@@ -88,6 +88,7 @@ class StepTiming(Base):
     status = Column(String(32), default="success")
     annotation = Column(String(32), nullable=True)
     log_excerpt = Column(Text, nullable=True)
+    source_function = Column(String(512), nullable=True)
 
     pipeline_run = relationship("PipelineRun", back_populates="step_timings")
 
@@ -98,3 +99,84 @@ class StepTiming(Base):
 
     def __repr__(self) -> str:
         return f"<StepTiming {self.step_name}: {self.duration_ms}ms>"
+
+
+class CodeIndex(Base):
+    __tablename__ = "code_indexes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repository_id = Column(
+        Integer, ForeignKey("tracked_repositories.id"), nullable=False
+    )
+    commit_sha = Column(String(64), nullable=False)
+    language_breakdown = Column(Text, nullable=True)
+    total_functions = Column(Integer, default=0)
+    total_log_calls = Column(Integer, default=0)
+    status = Column(String(32), default="pending", nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    repository = relationship("TrackedRepository")
+    functions = relationship(
+        "IndexedFunction", back_populates="code_index", cascade="all, delete-orphan"
+    )
+    log_calls = relationship(
+        "IndexedLogCall", back_populates="code_index", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_code_index_repo_sha", "repository_id", "commit_sha", unique=True),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CodeIndex {self.commit_sha[:8]} ({self.status})>"
+
+
+class IndexedFunction(Base):
+    __tablename__ = "indexed_functions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code_index_id = Column(
+        Integer, ForeignKey("code_indexes.id"), nullable=False
+    )
+    function_name = Column(String(512), nullable=False)
+    qualified_name = Column(String(1024), nullable=True)
+    file_path = Column(String(1024), nullable=False)
+    line_number = Column(Integer, nullable=False)
+    end_line_number = Column(Integer, nullable=True)
+    language = Column(String(32), nullable=False)
+    calls_json = Column(Text, nullable=True)
+
+    code_index = relationship("CodeIndex", back_populates="functions")
+
+    __table_args__ = (
+        Index("ix_func_name", "code_index_id", "function_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndexedFunction {self.function_name} @ {self.file_path}:{self.line_number}>"
+
+
+class IndexedLogCall(Base):
+    __tablename__ = "indexed_log_calls"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code_index_id = Column(
+        Integer, ForeignKey("code_indexes.id"), nullable=False
+    )
+    log_string = Column(Text, nullable=False)
+    file_path = Column(String(1024), nullable=False)
+    line_number = Column(Integer, nullable=False)
+    function_name = Column(String(512), nullable=True)
+    log_level = Column(String(32), nullable=True)
+    language = Column(String(32), nullable=False)
+
+    code_index = relationship("CodeIndex", back_populates="log_calls")
+
+    __table_args__ = (
+        Index("ix_log_call_index", "code_index_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndexedLogCall '{self.log_string[:30]}' @ {self.file_path}:{self.line_number}>"
