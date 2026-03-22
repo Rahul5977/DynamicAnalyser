@@ -62,6 +62,18 @@ class CorrelationError(DynamicAnalyserError):
     """Raised when trace correlation encounters an unrecoverable error."""
 
 
+class AnalysisError(DynamicAnalyserError):
+    """Raised when AI analysis fails."""
+
+
+class LLMError(DynamicAnalyserError):
+    """Raised when the LLM API call fails or returns unparseable output."""
+
+
+class AnalysisNotFoundError(DynamicAnalyserError):
+    """Raised when an analysis record is not found."""
+
+
 def to_http_exception(error: DynamicAnalyserError) -> HTTPException:
     """Map domain exceptions to HTTP exceptions."""
     status_map = {
@@ -78,6 +90,9 @@ def to_http_exception(error: DynamicAnalyserError) -> HTTPException:
         ASTParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
         IndexingError: status.HTTP_500_INTERNAL_SERVER_ERROR,
         CorrelationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+        AnalysisError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+        LLMError: status.HTTP_502_BAD_GATEWAY,
+        AnalysisNotFoundError: status.HTTP_404_NOT_FOUND,
     }
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     for exc_type, code in status_map.items():

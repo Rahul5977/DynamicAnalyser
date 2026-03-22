@@ -16,6 +16,9 @@ from app.models.database import (
     CodeIndex,
     IndexedFunction,
     IndexedLogCall,
+    Analysis,
+    AnalysisSuggestion,
+    AnalysisFeedback,
 )
 
 
@@ -332,3 +335,130 @@ class CodeIndexRepository:
         _ = code_index.functions
         _ = code_index.log_calls
         return code_index
+
+
+class AnalysisRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, analysis_id: int) -> Analysis:
+        from app.core.exceptions import AnalysisNotFoundError
+        analysis = (
+            self.db.query(Analysis)
+            .options(joinedload(Analysis.suggestions))
+            .filter(Analysis.id == analysis_id)
+            .first()
+        )
+        if not analysis:
+            raise AnalysisNotFoundError(
+                f"Analysis with id={analysis_id} not found"
+            )
+        return analysis
+
+    def get_latest_for_run(self, run_id: int) -> Analysis | None:
+        return (
+            self.db.query(Analysis)
+            .options(joinedload(Analysis.suggestions))
+            .filter(
+                Analysis.pipeline_run_id == run_id,
+                Analysis.status == "completed",
+            )
+            .order_by(desc(Analysis.created_at))
+            .first()
+        )
+
+    def get_all_for_repo(self, repo_id: int) -> list[Analysis]:
+        return (
+            self.db.query(Analysis)
+            .options(joinedload(Analysis.suggestions))
+            .filter(
+                Analysis.repository_id == repo_id,
+                Analysis.status == "completed",
+            )
+            .order_by(desc(Analysis.created_at))
+            .all()
+        )
+
+    def create(self, analysis: Analysis) -> Analysis:
+        try:
+            self.db.add(analysis)
+            self.db.commit()
+            self.db.refresh(analysis)
+            return analysis
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to create analysis: %s", e)
+            raise DatabaseError("Failed to create analysis", detail=str(e)) from e
+
+    def update_completed(
+        self, analysis_id: int, root_cause: str, primary_bottleneck: str,
+        anti_patterns_json: str, estimated_total_saving_ms: int,
+        raw_llm_response: str, llm_model: str,
+        llm_prompt_tokens: int, llm_completion_tokens: int,
+        completed_at, suggestions: list[AnalysisSuggestion],
+    ):
+        try:
+            a = self.db.query(Analysis).get(analysis_id)
+            if not a:
+                return
+            a.status = "completed"
+            a.root_cause = root_cause
+            a.primary_bottleneck = primary_bottleneck
+            a.anti_patterns_json = anti_patterns_json
+            a.estimated_total_saving_ms = estimated_total_saving_ms
+            a.raw_llm_response = raw_llm_response
+            a.llm_model = llm_model
+            a.llm_prompt_tokens = llm_prompt_tokens
+            a.llm_completion_tokens = llm_completion_tokens
+            a.completed_at = completed_at
+            for s in suggestions:
+                s.analysis_id = analysis_id
+                self.db.add(s)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to update analysis: %s", e)
+            raise DatabaseError("Failed to update analysis", detail=str(e)) from e
+
+    def update_failed(self, analysis_id: int, error_message: str):
+        try:
+            a = self.db.query(Analysis).get(analysis_id)
+            if a:
+                a.status = "failed"
+                a.error_message = error_message
+                self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to mark analysis as failed: %s", e)
+
+    def add_feedback(self, feedback: AnalysisFeedback) -> AnalysisFeedback:
+        try:
+            self.db.add(feedback)
+            self.db.commit()
+            self.db.refresh(feedback)
+            return feedback
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to save feedback: %s", e)
+            raise DatabaseError("Failed to save feedback", detail=str(e)) from e
+
+    def count_past_anti_pattern(self, repo_id: int, anti_pattern: str) -> int:
+        """Count how many past analyses flagged a given anti-pattern."""
+        rows = (
+            self.db.query(Analysis.anti_patterns_json)
+            .filter(
+                Analysis.repository_id == repo_id,
+                Analysis.status == "completed",
+                Analysis.anti_patterns_json.isnot(None),
+            )
+            .all()
+        )
+        count = 0
+        for (ap_json,) in rows:
+            try:
+                patterns = json.loads(ap_json)
+                if anti_pattern in patterns:
+                    count += 1
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return count

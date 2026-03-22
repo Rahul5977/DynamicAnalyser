@@ -9,7 +9,7 @@ from app.core.exceptions import DynamicAnalyserError, to_http_exception
 from app.core.logging import logger
 from app.models.database import Base
 from app.db.session import engine
-from app.api.routes import health, repos, runs, analysis
+from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard
 
 
 @asynccontextmanager
@@ -61,3 +61,5 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(repos.router, prefix="/api", tags=["repositories"])
 app.include_router(runs.router, prefix="/api", tags=["runs"])
 app.include_router(analysis.router, prefix="/api", tags=["analysis"])
+app.include_router(ai_analysis.router, prefix="/api", tags=["ai-analysis"])
+app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])

@@ -180,3 +180,94 @@ class IndexedLogCall(Base):
 
     def __repr__(self) -> str:
         return f"<IndexedLogCall '{self.log_string[:30]}' @ {self.file_path}:{self.line_number}>"
+
+
+class Analysis(Base):
+    __tablename__ = "analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pipeline_run_id = Column(
+        Integer, ForeignKey("pipeline_runs.id"), nullable=False
+    )
+    repository_id = Column(
+        Integer, ForeignKey("tracked_repositories.id"), nullable=False
+    )
+    status = Column(String(32), default="pending", nullable=False)
+    root_cause = Column(Text, nullable=True)
+    primary_bottleneck = Column(String(512), nullable=True)
+    anti_patterns_json = Column(Text, nullable=True)
+    estimated_total_saving_ms = Column(Integer, nullable=True)
+    raw_llm_response = Column(Text, nullable=True)
+    llm_model = Column(String(128), nullable=True)
+    llm_prompt_tokens = Column(Integer, nullable=True)
+    llm_completion_tokens = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    pipeline_run = relationship("PipelineRun")
+    repository = relationship("TrackedRepository")
+    suggestions = relationship(
+        "AnalysisSuggestion", back_populates="analysis", cascade="all, delete-orphan"
+    )
+    feedback = relationship(
+        "AnalysisFeedback", back_populates="analysis", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_analysis_run", "pipeline_run_id"),
+        Index("ix_analysis_repo", "repository_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Analysis run={self.pipeline_run_id} ({self.status})>"
+
+
+class AnalysisSuggestion(Base):
+    __tablename__ = "analysis_suggestions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(
+        Integer, ForeignKey("analyses.id"), nullable=False
+    )
+    rank = Column(Integer, nullable=False)
+    title = Column(String(512), nullable=False)
+    description = Column(Text, nullable=False)
+    target_function = Column(String(512), nullable=True)
+    target_file = Column(String(1024), nullable=True)
+    estimated_saving_ms = Column(Integer, nullable=False, default=0)
+    effort = Column(String(32), nullable=False, default="medium")
+    diff_hint = Column(Text, nullable=True)
+    enriched_diff = Column(Text, nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    anti_pattern = Column(String(256), nullable=True)
+
+    analysis = relationship("Analysis", back_populates="suggestions")
+
+    __table_args__ = (
+        Index("ix_suggestion_analysis", "analysis_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AnalysisSuggestion #{self.rank}: {self.title}>"
+
+
+class AnalysisFeedback(Base):
+    __tablename__ = "analysis_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(
+        Integer, ForeignKey("analyses.id"), nullable=False
+    )
+    suggestion_id = Column(
+        Integer, ForeignKey("analysis_suggestions.id"), nullable=True
+    )
+    verdict = Column(String(32), nullable=False)  # accepted / rejected / partial
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    analysis = relationship("Analysis", back_populates="feedback")
+
+    __table_args__ = (
+        Index("ix_feedback_analysis", "analysis_id"),
+    )
