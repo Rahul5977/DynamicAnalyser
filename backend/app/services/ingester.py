@@ -27,14 +27,20 @@ class LogIngester:
         # 1. Ensure repository is tracked
         tracked_repo = self.repo_store.get_by_full_name(repo_full_name)
 
-        # 2. Check for duplicate ingestion
+        # 2. Check for duplicate ingestion — return existing result instead of erroring
         existing = self.run_store.get_by_github_run_id(
             tracked_repo.id, github_run_id
         )
         if existing:
-            raise IngestionError(
-                f"Run {github_run_id} has already been ingested",
-                detail=f"Existing run id={existing.id}",
+            logger.info("Run %d already ingested as DB id=%d — returning cached result", github_run_id, existing.id)
+            slowest = max(existing.step_timings, key=lambda s: s.duration_ms) if existing.step_timings else None
+            return IngestionResult(
+                run_id=existing.id,
+                github_run_id=github_run_id,
+                steps_parsed=len(existing.step_timings),
+                total_duration_ms=existing.total_duration_ms or 0,
+                slowest_step=slowest.step_name if slowest else "",
+                slowest_step_ms=slowest.duration_ms if slowest else 0,
             )
 
         # 3. Fetch run metadata directly by GitHub run ID

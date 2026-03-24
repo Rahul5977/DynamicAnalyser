@@ -1,9 +1,10 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, GitBranch, BarChart3, Settings } from "lucide-react";
+import { LayoutDashboard, Play, BarChart3, Settings } from "lucide-react";
 
 const NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/analyze", label: "Analyze Repo", icon: Play },
   { path: "/analytics", label: "Analytics", icon: BarChart3 },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

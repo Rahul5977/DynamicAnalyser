@@ -149,6 +149,52 @@ tr:hover td { background: var(--bg-hover); }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 
+/* Pipeline runner — stage rows */
+.stage-row {
+  border-left: 3px solid var(--border);
+  margin: 0 0 0 20px;
+  padding: 0;
+  transition: border-color .2s;
+}
+.stage-row + .stage-row { border-top: 1px solid var(--border); }
+
+.stage-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px 12px 16px; gap: 12px;
+}
+.stage-header-left {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+}
+.stage-title { font-size: 14px; font-weight: 500; }
+.stage-header-right {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+}
+.stage-summary { font-size: 12px; color: var(--text-muted); }
+
+/* Stage logs */
+.stage-logs {
+  background: #0d1117; margin: 0 20px 12px 16px;
+  border-radius: 6px; padding: 12px; font-family: 'SF Mono', Consolas, monospace;
+  font-size: 12px; max-height: 280px; overflow-y: auto; border: 1px solid var(--border);
+}
+.log-line { display: flex; gap: 12px; margin-bottom: 3px; line-height: 1.5; }
+.log-time { color: #555; flex-shrink: 0; }
+.log-msg { color: #cdd6f4; word-break: break-word; }
+.log-info  .log-msg { color: #cdd6f4; }
+.log-success .log-msg { color: var(--green); }
+.log-error .log-msg { color: var(--red); }
+.log-warn  .log-msg { color: var(--amber); }
+
+/* Stage result panels */
+.result-panel {
+  margin: 0 20px 16px 16px; background: #0d1117;
+  border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto;
+}
+
+/* Spinner animation */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin-icon { animation: spin .9s linear infinite; display: inline-block; }
+
 @media (max-width: 1024px) {
   .sidebar { display: none; }
   .main-content { margin-left: 0; }

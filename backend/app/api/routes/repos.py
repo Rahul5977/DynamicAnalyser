@@ -10,6 +10,7 @@ from app.models.schemas import (
     PaginatedRuns,
     PipelineRunSummary,
 )
+from app.services.github_client import GitHubClient
 
 router = APIRouter(prefix="/repos")
 
@@ -32,6 +33,38 @@ def add_repo(request: AddRepoRequest, db: Session = Depends(get_db)):
             existing = repo_store.get_by_full_name(request.full_name)
             return existing
         return repo_store.create(request.full_name)
+    except DynamicAnalyserError as e:
+        raise to_http_exception(e) from e
+
+
+@router.get("/{owner}/{name}/github-runs")
+def list_github_runs(
+    owner: str,
+    name: str,
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    """Return recent completed GitHub Actions run IDs available for ingestion."""
+    try:
+        full_name = f"{owner}/{name}"
+        github = GitHubClient()
+        # Fetch more than needed so we can filter to completed runs
+        all_runs = github.get_workflow_runs(full_name, limit=limit * 4)
+        completed = [
+            r for r in all_runs
+            if r.conclusion in ("success", "failure", "cancelled")
+        ][:limit]
+        return [
+            {
+                "run_id": r.run_id,
+                "run_number": r.run_number,
+                "workflow_name": r.workflow_name,
+                "conclusion": r.conclusion,
+                "head_branch": r.head_branch,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in completed
+        ]
     except DynamicAnalyserError as e:
         raise to_http_exception(e) from e
 

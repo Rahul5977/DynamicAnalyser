@@ -53,6 +53,20 @@ export const submitFeedback = (analysisId, data) =>
     body: JSON.stringify(data),
   });
 
+// Ingest a specific GitHub Actions run
+export const ingestRun = (githubRunId, repoFullName) =>
+  request(`/runs/${githubRunId}/ingest?repo=${encodeURIComponent(repoFullName)}`, {
+    method: "POST",
+  });
+
+// Get recent GitHub run IDs for a repo (for ingestion)
+export const getGitHubRuns = (owner, name, limit = 5) =>
+  request(`/repos/${owner}/${name}/github-runs?limit=${limit}`);
+
+// Index a repo's source code
+export const indexRepo = (owner, name) =>
+  request(`/repos/${owner}/${name}/index`, { method: "POST" });
+
 // Demo
 export const seedDemo = () =>
   request("/demo/seed", { method: "POST" });
