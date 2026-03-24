@@ -4,6 +4,7 @@ from sqlalchemy import func, desc, distinct, asc
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.exceptions import (
+    AnalysisNotFoundError,
     DatabaseError,
     RepositoryNotFoundError,
     RunNotFoundError,
@@ -50,7 +51,7 @@ class TrackedRepoRepository:
         return repo
 
     def get_by_id(self, repo_id: int) -> TrackedRepository:
-        repo = self.db.query(TrackedRepository).get(repo_id)
+        repo = self.db.get(TrackedRepository, repo_id)
         if not repo:
             raise RepositoryNotFoundError(f"Repository with id={repo_id} not found")
         return repo
@@ -237,6 +238,18 @@ class PipelineRunRepository:
             logger.error("Failed to get step names: %s", e)
             raise DatabaseError("Failed to get step names", detail=str(e)) from e
 
+    def count_runs_for_repo(self, repo_id: int, last_n: int = 50) -> int:
+        """Return the count of distinct pipeline runs in the last N window."""
+        try:
+            return (
+                self.db.query(func.count(PipelineRun.id))
+                .filter(PipelineRun.repository_id == repo_id)
+                .scalar() or 0
+            )
+        except Exception as e:
+            logger.error("Failed to count runs: %s", e)
+            raise DatabaseError("Failed to count runs", detail=str(e)) from e
+
     def get_latest_total_duration(self, repo_id: int) -> int | None:
         """Return total_duration_ms of the most recent completed run."""
         run = (
@@ -293,7 +306,7 @@ class CodeIndexRepository:
         language_breakdown: dict | None = None,
     ):
         try:
-            idx = self.db.query(CodeIndex).get(index_id)
+            idx = self.db.get(CodeIndex, index_id)
             if idx:
                 idx.status = status
                 idx.error_message = error_message
@@ -342,7 +355,6 @@ class AnalysisRepository:
         self.db = db
 
     def get_by_id(self, analysis_id: int) -> Analysis:
-        from app.core.exceptions import AnalysisNotFoundError
         analysis = (
             self.db.query(Analysis)
             .options(joinedload(Analysis.suggestions))
@@ -398,7 +410,7 @@ class AnalysisRepository:
         completed_at, suggestions: list[AnalysisSuggestion],
     ):
         try:
-            a = self.db.query(Analysis).get(analysis_id)
+            a = self.db.get(Analysis, analysis_id)
             if not a:
                 return
             a.status = "completed"
@@ -422,7 +434,7 @@ class AnalysisRepository:
 
     def update_failed(self, analysis_id: int, error_message: str):
         try:
-            a = self.db.query(Analysis).get(analysis_id)
+            a = self.db.get(Analysis, analysis_id)
             if a:
                 a.status = "failed"
                 a.error_message = error_message

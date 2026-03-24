@@ -175,6 +175,7 @@ class AIEngine:
     def __init__(self, db: Session):
         self.db = db
         self._settings = get_settings()
+        self._gh_client = None
 
     def analyse_run(self, run_id: int, force: bool = False) -> Analysis:
         """Run full AI analysis for a pipeline run.
@@ -247,8 +248,8 @@ class AIEngine:
             # Reload to get full record with suggestions
             return analysis_store.get_by_id(analysis.id)
 
-        except (AnalysisError, LLMError):
-            analysis_store.update_failed(analysis.id, str(analysis))
+        except (AnalysisError, LLMError) as e:
+            analysis_store.update_failed(analysis.id, str(e))
             raise
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -275,6 +276,13 @@ class AIEngine:
         except Exception as e:
             logger.warning("Trace correlation failed: %s", e)
             trace = None
+
+        # Create GitHub client once for source fetching (avoids re-validating token per step)
+        try:
+            from app.services.github_client import GitHubClient
+            self._gh_client = GitHubClient()
+        except Exception:
+            self._gh_client = None
 
         # Build step-level context
         bottleneck_contexts: list[BottleneckContext] = []
@@ -352,8 +360,9 @@ class AIEngine:
             return None, None
 
         try:
-            from app.services.github_client import GitHubClient
-            gh = GitHubClient()
+            gh = self._gh_client
+            if gh is None:
+                return None, None
             content = gh.get_file_contents(repo_full_name, file_path, ref=commit_sha)
 
             lines = content.split("\n")

@@ -3,6 +3,7 @@
 import difflib
 import json
 import re
+import types
 
 from sqlalchemy.orm import Session
 
@@ -152,7 +153,7 @@ class TraceCorrelator:
         functions_info = []
         for f in code_idx.functions:
             calls = json.loads(f.calls_json) if f.calls_json else []
-            functions_info.append(type('FI', (), {
+            functions_info.append(types.SimpleNamespace(**{
                 'name': f.function_name,
                 'qualified_name': f.qualified_name,
                 'file_path': f.file_path,
@@ -160,18 +161,18 @@ class TraceCorrelator:
                 'end_line_number': f.end_line_number or f.line_number,
                 'calls': calls,
                 'language': f.language,
-            })())
+            }))
 
         log_calls_info = []
         for lc in code_idx.log_calls:
-            log_calls_info.append(type('LCI', (), {
+            log_calls_info.append(types.SimpleNamespace(**{
                 'log_string': lc.log_string,
                 'file_path': lc.file_path,
                 'line_number': lc.line_number,
                 'function_name': lc.function_name,
                 'log_level': lc.log_level,
                 'language': lc.language,
-            })())
+            }))
 
         # Build graphs
         from app.services.ast_parser import CodeIndexer

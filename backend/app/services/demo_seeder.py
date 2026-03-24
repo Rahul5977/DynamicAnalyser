@@ -6,6 +6,7 @@ import datetime
 
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.core.logging import logger
 from app.models.database import (
     TrackedRepository,
@@ -253,7 +254,7 @@ class DemoSeeder:
                 primary_bottleneck=template["primary_bottleneck"],
                 anti_patterns_json=json.dumps(template["anti_patterns"]),
                 estimated_total_saving_ms=template["total_saving"],
-                llm_model="claude-sonnet-4-20250514",
+                llm_model=get_settings().LLM_MODEL,
                 completed_at=run.created_at + datetime.timedelta(minutes=1),
             )
             self.db.add(a)

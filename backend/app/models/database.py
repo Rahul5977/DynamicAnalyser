@@ -1,5 +1,6 @@
 import datetime
 from sqlalchemy import (
+    BigInteger,
     Column,
     Integer,
     String,
@@ -49,7 +50,7 @@ class PipelineRun(Base):
     repository_id = Column(
         Integer, ForeignKey("tracked_repositories.id"), nullable=False
     )
-    github_run_id = Column(Integer, nullable=False, index=True)
+    github_run_id = Column(BigInteger, nullable=False, index=True)
     run_number = Column(Integer, nullable=False)
     workflow_name = Column(String(255), nullable=True)
     status = Column(String(32), nullable=False)

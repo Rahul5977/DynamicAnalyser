@@ -136,7 +136,9 @@ class BottleneckRanker:
         for i, entry in enumerate(entries[:top_n], 1):
             entry["rank"] = i
 
-        return entries[:top_n], max_samples
+        # Return the actual number of distinct runs (not max sample count)
+        actual_run_count = run_store.count_runs_for_repo(repo_id, last_n)
+        return entries[:top_n], actual_run_count
 
     @staticmethod
     def _compute_trend(durations: list[int]) -> float:

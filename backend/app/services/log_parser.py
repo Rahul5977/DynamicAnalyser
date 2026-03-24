@@ -85,20 +85,37 @@ def parse_log_line(line: str) -> ParsedLogLine | None:
     )
 
 
-def _extract_step_name_from_header(header: str) -> tuple[str, int]:
+def _extract_step_name_from_header(header: str) -> tuple[str | None, int]:
     """Extract step name and number from log file header path.
 
-    Example: 'build/2_Run npm install.txt' -> ('Run npm install', 2)
+    GitHub Actions log archives use the format: job_name/step_number_step_name.txt
+    Top-level files (no subdirectory) are the consolidated job logs and named after the job.
+
+    Examples:
+      'build/2_Run npm install.txt'              -> ('Run npm install', 2)
+      'test (ubuntu-latest, 3.13).txt'           -> ('test (ubuntu-latest, 3.13)', 0)
+      'test (ubuntu-latest)/0_system.txt'        -> ('test (ubuntu-latest) / system', 0)
     """
     # Remove .txt extension
     path = header.rsplit(".txt", 1)[0] if header.endswith(".txt") else header
-    # Take last segment after /
-    segment = path.rsplit("/", 1)[-1] if "/" in path else path
-    # Try to extract step number prefix: '2_Run npm install'
-    step_match = re.match(r"(\d+)_(.+)", segment)
-    if step_match:
-        return step_match.group(2).strip(), int(step_match.group(1))
-    return segment.strip(), 0
+
+    if "/" in path:
+        job_part, step_segment = path.rsplit("/", 1)
+        step_match = re.match(r"(\d+)_(.+)", step_segment)
+        if step_match:
+            step_name = step_match.group(2).strip()
+            step_num = int(step_match.group(1))
+            return step_name, step_num
+        # No step-number prefix inside a job folder (e.g. "benchmark/system.txt").
+        # These are GitHub Actions runner infrastructure files — skip by returning None.
+        return None, 0
+    else:
+        # Top-level file = consolidated job log (may have a numeric prefix like "10_test (...)")
+        segment = path.strip()
+        step_match = re.match(r"(\d+)_(.+)", segment)
+        if step_match:
+            return step_match.group(2).strip(), int(step_match.group(1))
+        return segment, 0
 
 
 def parse_logs(raw_log: str) -> list[ParsedStep]:
@@ -119,12 +136,15 @@ def parse_logs(raw_log: str) -> list[ParsedStep]:
     current_step: ParsedStep | None = None
     current_lines: list[ParsedLogLine] = []
     archive_mode = False  # True when we detect === file header === sections
+    skip_section = False  # True when current section is infrastructure-only (skip lines)
 
     for line in lines:
         # Check for file section header
         header_match = FILE_HEADER_RE.match(line)
         if header_match:
             archive_mode = True
+            skip_section = False
+
             # Finalize previous step
             if current_step and current_lines:
                 _finalize_step(current_step, current_lines)
@@ -133,11 +153,23 @@ def parse_logs(raw_log: str) -> list[ParsedStep]:
             step_name, step_number = _extract_step_name_from_header(
                 header_match.group(1)
             )
+            # None step_name = infrastructure-only file (e.g. job/system.txt); skip it.
+            # We set skip_section=True so that subsequent log lines in this section
+            # are discarded instead of creating implicit "Setup" steps.
+            if step_name is None:
+                current_step = None
+                current_lines = []
+                skip_section = True
+                continue
             current_step = ParsedStep(
                 step_name=step_name,
                 step_number=step_number if step_number else len(steps) + 1,
             )
             current_lines = []
+            continue
+
+        # Skip lines belonging to infrastructure-only sections
+        if skip_section:
             continue
 
         parsed = parse_log_line(line)

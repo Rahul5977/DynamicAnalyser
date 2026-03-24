@@ -81,13 +81,26 @@ class FixRecommender:
         """Parse a diff_hint into before and after line lists.
 
         Handles formats like:
+        - Git diff format: lines prefixed with '-' (before) and '+' (after)
         - "Before: X\\nAfter: Y"
-        - "// before\\ncode1\\n// after\\ncode2"
         - Multi-line blocks separated by arrows or markers
         """
         hint = diff_hint.strip()
         before: list[str] = []
         after: list[str] = []
+
+        # Try git diff format: lines starting with '-' or '+' (but not '---'/'+++' headers)
+        lines = hint.split("\n")
+        diff_lines = [l for l in lines if l.startswith(("+", "-")) and not l.startswith(("---", "+++"))]
+        if diff_lines and len(diff_lines) == len([l for l in lines if l.strip()]):
+            for line in lines:
+                stripped = line.rstrip()
+                if stripped.startswith("-") and not stripped.startswith("---"):
+                    before.append(stripped[1:].lstrip())
+                elif stripped.startswith("+") and not stripped.startswith("+++"):
+                    after.append(stripped[1:].lstrip())
+            if before or after:
+                return before, after
 
         # Try "Before:" / "After:" format
         hint_lower = hint.lower()
@@ -152,8 +165,8 @@ class FixRecommender:
                 if func:
                     score += 0.1
 
-        # Factor 3: Reasonable saving estimate
-        if 500 <= suggestion.estimated_saving_ms <= 10000:
+        # Factor 3: Reasonable saving estimate (500ms–300s covers typical CI savings)
+        if 500 <= suggestion.estimated_saving_ms <= 300000:
             score += 0.1
 
         return min(round(score, 2), 1.0)

@@ -37,25 +37,16 @@ class LogIngester:
                 detail=f"Existing run id={existing.id}",
             )
 
-        # 3. Fetch run metadata from GitHub
+        # 3. Fetch run metadata directly by GitHub run ID
         try:
-            run_infos = self.github_client.get_workflow_runs(
-                repo_full_name, limit=100
-            )
-            run_info = next(
-                (r for r in run_infos if r.run_id == github_run_id), None
+            run_info = self.github_client.get_workflow_run_by_id(
+                repo_full_name, github_run_id
             )
         except Exception as e:
             raise IngestionError(
                 f"Failed to fetch run metadata for {github_run_id}",
                 detail=str(e),
             ) from e
-
-        if not run_info:
-            raise RunNotFoundError(
-                f"Workflow run {github_run_id} not found in {repo_full_name}",
-                detail="The run may be too old or the run ID may be incorrect",
-            )
 
         # 4. Download and parse logs
         try:

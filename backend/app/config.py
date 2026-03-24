@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     BOTTLENECK_DEFAULT_WINDOW: int = 50
 
     ANTHROPIC_API_KEY: str = ""
-    LLM_MODEL: str = "claude-sonnet-4-20250514"
+    LLM_MODEL: str = "claude-sonnet-4-6"
     LLM_MAX_OUTPUT_TOKENS: int = 3000
     LLM_CONTEXT_TOKEN_BUDGET: int = 12000
     ANALYSIS_TARGET_DURATION_MS: int = 15000

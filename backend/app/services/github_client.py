@@ -92,6 +92,38 @@ class GitHubClient:
         except GithubException as e:
             raise self._wrap_exception(e) from e
 
+    def get_workflow_run_by_id(
+        self, repo_full_name: str, run_id: int
+    ) -> WorkflowRunInfo:
+        """Fetch a single workflow run directly by its GitHub run ID."""
+        try:
+            repo = self._get_repo(repo_full_name)
+            run = repo.get_workflow_run(run_id)
+            return WorkflowRunInfo(
+                run_id=run.id,
+                run_number=run.run_number,
+                workflow_name=run.name,
+                status=run.status,
+                conclusion=run.conclusion,
+                head_branch=run.head_branch,
+                head_sha=run.head_sha,
+                created_at=run.created_at,
+            )
+        except (GitHubNotFoundError, GitHubAuthError):
+            raise
+        except RateLimitExceededException as e:
+            raise GitHubRateLimitError(
+                "GitHub API rate limit exceeded",
+                detail="Wait before retrying or use a token with higher limits",
+            ) from e
+        except GithubException as e:
+            if e.status == 404:
+                raise GitHubNotFoundError(
+                    f"Workflow run {run_id} not found in {repo_full_name}",
+                    detail="The run may not exist or the run ID may be incorrect",
+                ) from e
+            raise self._wrap_exception(e) from e
+
     def get_run_logs(self, repo_full_name: str, run_id: int) -> str:
         try:
             repo = self._get_repo(repo_full_name)

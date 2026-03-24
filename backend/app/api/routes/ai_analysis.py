@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import DynamicAnalyserError, to_http_exception
+from app.core.exceptions import AnalysisNotFoundError, DynamicAnalyserError, to_http_exception
 from app.db.repository import AnalysisRepository, TrackedRepoRepository
 from app.db.session import get_db
 from app.models.database import AnalysisFeedback
@@ -122,7 +122,6 @@ def get_latest_analysis(
         store = AnalysisRepository(db)
         analysis = store.get_latest_for_run(run_id)
         if not analysis:
-            from app.core.exceptions import AnalysisNotFoundError
             raise AnalysisNotFoundError(
                 f"No completed analysis found for run {run_id}"
             )

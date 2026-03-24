@@ -6,7 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Header, HTTPException
 from sqlalchemy import func, desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.core.exceptions import DynamicAnalyserError, to_http_exception
@@ -163,6 +163,7 @@ def _compute_fix_impacts(db: Session, repo_id: int) -> list[FixImpactEntry]:
     """Compute before/after impact for suggestions from completed analyses."""
     analyses = (
         db.query(Analysis)
+        .options(joinedload(Analysis.suggestions))
         .filter(
             Analysis.repository_id == repo_id,
             Analysis.status == "completed",
@@ -180,7 +181,7 @@ def _compute_fix_impacts(db: Session, repo_id: int) -> list[FixImpactEntry]:
         prev = analyses[i - 1]
         curr = analyses[i]
         if prev.estimated_total_saving_ms and curr.estimated_total_saving_ms:
-            for s in (prev.suggestions if hasattr(prev, 'suggestions') else []):
+            for s in (prev.suggestions or []):
                 if s.anti_pattern and s.anti_pattern not in seen_patterns:
                     before = prev.estimated_total_saving_ms
                     after = curr.estimated_total_saving_ms
