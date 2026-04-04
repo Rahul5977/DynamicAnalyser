@@ -5,6 +5,7 @@ import { uploadAppLog, detectAppLogFormat } from "../services/api";
 const FORMATS = [
   { value: "auto",       label: "Auto-detect" },
   { value: "json",       label: "JSON lines  (e.g. {\"func\":\"…\",\"elapsed_ms\":42})" },
+  { value: "radcom",     label: "RADCOM / Custom Spring  (D:timestamp FN:method R:message)" },
   { value: "spring",     label: "Spring Boot  (2024-03-19 10:32:01 INFO [main] …)" },
   { value: "rails",      label: "Ruby on Rails  (Completed 200 OK in 1234ms)" },
   { value: "syslog",     label: "Syslog  (RFC 3164 / journald)" },
@@ -359,6 +360,7 @@ export default function AppLogUpload() {
           <tbody>
             {[
               ["JSON",        `{"func":"process_packet","elapsed_ms":42,"event":"exit"}`],
+              ["RADCOM",      `L:INFO D:2025-10-27 10:23:25.312 F:com.radcom.Module(57) FN:myMethod TI:main C:Cat R:msg`],
               ["Spring Boot", `2024-03-19 10:32:01.456 INFO [main] c.e.Svc - fetchUsers() in 1234ms`],
               ["Rails",       `Completed 200 OK in 1234ms (Views: 12ms | ActiveRecord: 890ms)`],
               ["syslog",      `Mar 19 10:32:01 host app[123]: [TRACE] reassemble_stream() start`],

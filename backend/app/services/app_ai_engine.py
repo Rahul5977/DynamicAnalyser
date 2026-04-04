@@ -81,11 +81,16 @@ _APP_ANTI_PATTERNS = """
 
 _APP_SYSTEM_PROMPT = (
     "You are an expert performance engineer analysing runtime application logs. "
-    "You will be given: function names that are executing slowly (from log timing data), "
-    "their duration from the log, and optionally the source code of the slow function "
-    "and the call chain showing what calls what. "
-    "Your job: explain WHY it is slow, and give concrete code changes. "
-    "Focus on algorithmic inefficiency, unnecessary I/O, blocking calls, or data structure misuse. "
+    "You will be given: function names with timing data extracted from log files, "
+    "and optionally the source code and call chain. "
+    "Your job: identify real bottlenecks based ONLY on the evidence in the data, "
+    "explain why they are slow, and suggest concrete improvements. "
+    "IMPORTANT RULES to avoid hallucination:\n"
+    "  - Only name functions that appear in the data provided.\n"
+    "  - Do NOT fabricate file paths, line numbers, or code you have not been shown.\n"
+    "  - If no source code is provided, keep diff_hint as pseudocode / high-level description.\n"
+    "  - Distinguish periodic/scheduled functions (consistent avg interval) from truly slow functions.\n"
+    "  - estimated_saving_ms must be ≤ the function's max_ms shown in the data.\n"
     "Respond in JSON matching the schema provided.\n"
     + _APP_ANTI_PATTERNS
 )
@@ -217,9 +222,19 @@ class AppAIEngine:
         lines = [
             f"## Application: {session.app_name}",
             f"Log format: {session.log_format}",
-            f"Total captured duration: {total_ms}ms over {session.total_calls} function calls.",
+            f"Recorded {session.total_calls} function-call timing entries.",
             "",
-            "## Slowest functions (by cumulative time):",
+            "**Important:** Timings come from two sources:",
+            "  1. Explicit duration messages in the log (e.g. 'completed in 5787 ms') — "
+            "these are actual execution times.",
+            "  2. Inter-call intervals — delta between consecutive log entries for the same "
+            "function. These represent HOW OFTEN the function is invoked, NOT how long it "
+            "runs. For example avg=5000ms for sendHeartBeat means it is called every 5s, "
+            "not that it takes 5s to execute.",
+            "Focus your analysis on functions with HIGH inter-call intervals (bottlenecks "
+            "holding up the system) or explicit long durations.",
+            "",
+            "## Functions ranked by cumulative recorded time:",
         ]
         for rank, (fn, stats) in enumerate(top, 1):
             avg = stats["total_ms"] // max(stats["count"], 1)

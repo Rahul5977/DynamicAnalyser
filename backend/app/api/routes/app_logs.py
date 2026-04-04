@@ -48,8 +48,8 @@ from app.services.app_log_parser import parse_to_universal
 router = APIRouter()
 settings = get_settings()
 
-_ALLOWED_FORMATS = {"auto", "json", "syslog", "tshark", "logfmt",
-                    "spring", "rails", "enter_exit", "heuristic", "custom"}
+_ALLOWED_FORMATS = {"auto", "unknown", "json", "syslog", "tshark", "logfmt",
+                    "spring", "rails", "enter_exit", "heuristic", "custom", "radcom"}
 _MAX_BYTES = settings.APP_LOG_MAX_SIZE_MB * 1024 * 1024
 
 

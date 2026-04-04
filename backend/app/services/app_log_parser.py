@@ -160,6 +160,10 @@ class FormatDetector:
         r"(ERROR|WARN|INFO|DEBUG|TRACE)\s+\[",
         re.I,
     )
+    _RADCOM_PAT = re.compile(
+        r"D:\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+.*?\bFN:\w+",
+        re.I,
+    )
     _RAILS_PAT = re.compile(
         r"(Completed\s+\d{3}|Processing by|Started\s+(?:GET|POST|PUT|PATCH|DELETE))",
         re.I,
@@ -174,6 +178,7 @@ class FormatDetector:
 
         scores = {
             "json":       self._score_json(sample),
+            "radcom":     self._score_radcom(sample),
             "spring":     self._score_spring(sample),
             "rails":      self._score_rails(sample),
             "tshark":     self._score_tshark(sample),
@@ -224,6 +229,11 @@ class FormatDetector:
             if self._LOGFMT_PAT.search(l) and not l.strip().startswith("{")
         )
         return hits / max(len(sample[:40]), 1)
+
+    def _score_radcom(self, sample: list[str]) -> float:
+        hits = sum(1 for l in sample[:40] if self._RADCOM_PAT.search(l))
+        raw = hits / max(len(sample[:40]), 1)
+        return min(raw * 2.5, 1.0)  # boost: 40% coverage → 1.0 confidence
 
     def _score_enter_exit(self, sample: list[str]) -> float:
         has_enter = any(self._ENTER_PAT.search(l) for l in sample[:50])
@@ -651,6 +661,81 @@ class EnterExitParser:
         return results
 
 
+class RadcomParser:
+    """
+    RADCOM microservice log format (Spring Boot variant with custom key prefixes):
+      L:INFO D:2025-10-27 10:23:25.312 F:com.radcom.Module(57) FN:methodName TI:main C:Category R:message
+      D:2025-10-27 10:23:25.312 L:INFO C:class F:File.java(57) Fn:methodName T:thread R:message
+
+    Strategy:
+      1. Extract explicit timing from the R: message (e.g. "completed in 5787 ms").
+      2. For functions that appear consecutively within a 60-second window, compute
+         the delta as duration. Deltas > 60s are skipped — they represent the gap
+         between unrelated invocations, not a single call's duration.
+    """
+    _LINE = re.compile(
+        r"D:(?P<ts>\d{4}-\d{2}-\d{2}[\s]\d{2}:\d{2}:\d{2}\.\d+)"
+        r".*?\bFN:(?P<func>[A-Za-z_$][A-Za-z0-9_$<>]+)",
+        re.I,
+    )
+    _INLINE_DUR = re.compile(
+        r"(?:completed?|initializ|started?|took|elapsed|finished?|done)\w*"
+        r"\s+(?:in\s+)?(?P<val>[\d.]+)\s*(?P<unit>ms|s|sec)\b",
+        re.I,
+    )
+    # Generic / infrastructure functions that pollute results with meaningless deltas
+    _SKIP_FUNCS = frozenset({
+        "log", "info", "warn", "error", "debug", "trace",
+        "isReady", "run", "main", "start",
+    })
+    _MAX_DELTA_MS = 60_000  # ignore deltas > 60 s between same-function calls
+
+    def parse(self, lines: list[str]) -> list[UniversalLogRecord]:
+        results: list[UniversalLogRecord] = []
+        pending: dict[str, tuple[datetime, str, int]] = {}
+        counters: dict[str, int] = {}
+
+        for i, raw in enumerate(lines):
+            lm = self._LINE.search(raw)
+            if not lm:
+                continue
+            ts_s = lm.group("ts")
+            try:
+                ts = datetime.strptime(ts_s, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                ts = _NOW
+            fn = lm.group("func").strip()
+            if not fn or fn in self._SKIP_FUNCS:
+                continue
+
+            dur_m = self._INLINE_DUR.search(raw)
+            if dur_m:
+                dur_ms = _duration_to_ms(dur_m.group("val"), dur_m.group("unit"))
+                if dur_ms > 0:
+                    counters[fn] = counters.get(fn, 0) + 1
+                    results.append(UniversalLogRecord(
+                        func_name=fn, duration_ms=dur_ms, timestamp=ts,
+                        log_excerpt=_excerpt(lines, i), raw_line=raw.rstrip(),
+                        call_number=counters[fn],
+                    ))
+                pending.pop(fn, None)
+                continue
+
+            if fn in pending:
+                prev_ts, prev_raw, prev_idx = pending[fn]
+                dur_ms = max(0, int((ts - prev_ts).total_seconds() * 1000))
+                if 0 < dur_ms <= self._MAX_DELTA_MS:
+                    counters[fn] = counters.get(fn, 0) + 1
+                    results.append(UniversalLogRecord(
+                        func_name=fn, duration_ms=dur_ms, timestamp=prev_ts,
+                        log_excerpt=_excerpt(lines, prev_idx, 0, 3), raw_line=raw.rstrip(),
+                        call_number=counters[fn],
+                    ))
+            pending[fn] = (ts, raw.rstrip(), i)
+
+        return results or HeuristicParser().parse(lines)
+
+
 class HeuristicParser:
     """
     Last-resort fallback.  Looks for lines like:
@@ -774,6 +859,7 @@ _PARSERS: dict[str, object] = {
     "rails":      RailsParser(),
     "tshark":     TsharkParser(),
     "enter_exit": EnterExitParser(),
+    "radcom":     RadcomParser(),
 }
 
 
