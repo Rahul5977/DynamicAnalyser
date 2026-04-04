@@ -1,13 +1,18 @@
 """
 app_logs.py
 -----------
-API routes for the Application Log Analysis feature.
+All API routes for the Application Log Analysis feature (Phases 1–5).
 
-Endpoints:
-  POST  /api/app-logs/upload                     upload a log file
-  GET   /api/app-logs/sessions                   list all sessions
-  GET   /api/app-logs/sessions/{session_id}      one session + its calls
-  POST  /api/app-logs/sessions/{session_id}/analyse  trigger AI analysis
+Endpoints
+─────────
+POST  /api/app-logs/detect-format                      Phase 3: preview format + first records
+POST  /api/app-logs/upload                             Phase 1: multipart upload + parse
+GET   /api/app-logs/sessions                           list sessions
+GET   /api/app-logs/sessions/{id}                      session detail + function calls
+POST  /api/app-logs/sessions/{id}/index-source         Phase 4: trigger code index for source_repo
+GET   /api/app-logs/sessions/{id}/trace                Phase 4: source-correlated calls
+POST  /api/app-logs/sessions/{id}/analyse              Phase 5: run AI analysis
+GET   /api/app-logs/sessions/{id}/analysis             Phase 5: latest analysis for session
 """
 
 from __future__ import annotations
@@ -16,31 +21,110 @@ import json
 import os
 import uuid
 from datetime import datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.logging import logger
 from app.db.session import get_db
-from app.models.database import AppFunctionCall, AppLogSession
+from app.models.database import AppFunctionCall, AppLogSession, Analysis
 from app.models.schemas import (
+    AnalysisResponse,
     AppFunctionCallResponse,
     AppLogAnalyseResponse,
     AppLogSessionDetail,
     AppLogSessionResponse,
     AppLogUploadResponse,
+    AppTraceResponse,
+    DetectFormatResponse,
+    SampleRecord,
+    SuggestionResponse,
 )
 from app.services.app_ingester import AppIngester
+from app.services.app_log_parser import parse_to_universal
 
 router = APIRouter()
 settings = get_settings()
 
-_ALLOWED_FORMATS = {"auto", "json", "syslog", "tshark", "logfmt", "custom"}
+_ALLOWED_FORMATS = {"auto", "json", "syslog", "tshark", "logfmt",
+                    "spring", "rails", "enter_exit", "heuristic", "custom"}
 _MAX_BYTES = settings.APP_LOG_MAX_SIZE_MB * 1024 * 1024
 
 
-# ── Upload ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 3 — Detect format (called client-side before full upload)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/app-logs/detect-format", response_model=DetectFormatResponse)
+async def detect_format_endpoint(
+    payload: Annotated[dict, Body()],
+    db: Session = Depends(get_db),
+):
+    """
+    Accept the first 50 lines of a log file as JSON `{"lines": [...]}`.
+    Returns detected format, confidence score, and up to 5 preview records.
+    Called instantly after the user drops a file — before full upload.
+    """
+    lines: list[str] = payload.get("lines", [])
+    app_name: str = payload.get("app_name", "")
+    custom_pattern: str = payload.get("custom_pattern", "")
+
+    if not lines:
+        raise HTTPException(status_code=422, detail="'lines' array is required")
+
+    from app.services.app_log_parser import detect_format as _detect
+    fmt, confidence = _detect(lines)
+
+    # Parse first 5 records for preview
+    _, records = parse_to_universal(lines, fmt=fmt, custom_pattern=custom_pattern)
+    sample = [
+        SampleRecord(
+            func_name=r.func_name,
+            duration_ms=r.duration_ms,
+            log_excerpt=(r.log_excerpt or "")[:200],
+        )
+        for r in records[:5]
+    ]
+
+    # If confidence is low, try AI schema inference and re-run
+    if confidence < 0.3 and app_name and settings.ANTHROPIC_API_KEY:
+        try:
+            from app.services.log_schema_inferrer import AISchemaInferrer
+            inferrer = AISchemaInferrer(db)
+            schema = inferrer.infer(lines, app_name=app_name)
+            if schema and schema.func_regex:
+                # Use the inferred patterns to try a custom parse
+                import re as _re
+                patterns = " ".join(filter(None, [
+                    schema.ts_regex, schema.func_regex, schema.elapsed_regex
+                ]))
+                _, ai_recs = parse_to_universal(lines, fmt="custom", custom_pattern=patterns)
+                if ai_recs:
+                    fmt = "ai_inferred"
+                    confidence = 0.7
+                    sample = [
+                        SampleRecord(
+                            func_name=r.func_name,
+                            duration_ms=r.duration_ms,
+                            log_excerpt=(r.log_excerpt or "")[:200],
+                        )
+                        for r in ai_recs[:5]
+                    ]
+        except Exception as e:
+            logger.warning("AI schema inference failed: %s", e)
+
+    return DetectFormatResponse(
+        format=fmt,
+        confidence=round(confidence, 3),
+        sample_records=sample,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 1 — Upload + parse
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/app-logs/upload", response_model=AppLogUploadResponse, status_code=201)
 async def upload_app_log(
@@ -52,13 +136,13 @@ async def upload_app_log(
     db: Session = Depends(get_db),
 ):
     """
-    Accept a multipart log file upload.
+    Accept a multipart log file upload, parse it, store results.
 
-    - **file**: .log / .txt / any plain-text log file
-    - **app_name**: human label, e.g. "nginx", "tshark", "my-go-service"
-    - **log_format**: auto | json | syslog | tshark | logfmt | custom
-    - **source_repo**: optional GitHub URL for future correlation
-    - **custom_pattern**: regex with named groups (used when log_format=custom)
+    - **file**: plain-text log (.log / .txt / any text format)
+    - **app_name**: human label, e.g. "nginx", "tshark", "my-service"
+    - **log_format**: auto | json | syslog | tshark | logfmt | spring | rails | enter_exit | custom
+    - **source_repo**: optional GitHub URL for source correlation
+    - **custom_pattern**: named-group regex (when log_format=custom)
     """
     if log_format not in _ALLOWED_FORMATS:
         raise HTTPException(
@@ -66,24 +150,20 @@ async def upload_app_log(
             detail=f"Invalid log_format. Choose from: {sorted(_ALLOWED_FORMATS)}",
         )
 
-    # --- Size guard ---
     contents = await file.read()
     if len(contents) > _MAX_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum size is {settings.APP_LOG_MAX_SIZE_MB} MB.",
+            detail=f"File too large. Maximum is {settings.APP_LOG_MAX_SIZE_MB} MB.",
         )
 
-    # --- Save to disk ---
     upload_dir = os.path.abspath(settings.APP_LOG_UPLOAD_DIR)
     os.makedirs(upload_dir, exist_ok=True)
-
     safe_name = f"{uuid.uuid4().hex}_{os.path.basename(file.filename or 'upload.log')}"
     file_path = os.path.join(upload_dir, safe_name)
     with open(file_path, "wb") as fh:
         fh.write(contents)
 
-    # --- Create session record ---
     session = AppLogSession(
         app_name=app_name.strip(),
         log_file_path=file_path,
@@ -97,7 +177,6 @@ async def upload_app_log(
     db.commit()
     db.refresh(session)
 
-    # --- Ingest synchronously (file is small enough) ---
     try:
         ingester = AppIngester(db)
         ingester.ingest_file(
@@ -109,7 +188,6 @@ async def upload_app_log(
         db.refresh(session)
     except Exception as e:
         logger.error("Ingestion failed for session %d: %s", session.id, e)
-        # Session already marked failed inside ingester; just report it
 
     return AppLogUploadResponse(
         session_id=session.id,
@@ -123,20 +201,23 @@ async def upload_app_log(
     )
 
 
-# ── List sessions ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# List sessions
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/app-logs/sessions", response_model=list[AppLogSessionResponse])
 def list_app_sessions(db: Session = Depends(get_db)):
-    """Return all app-log sessions, newest first."""
-    rows = (
+    """Return all sessions, newest first."""
+    return (
         db.query(AppLogSession)
         .order_by(AppLogSession.created_at.desc())
         .all()
     )
-    return rows
 
 
-# ── Session detail ────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Session detail
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/app-logs/sessions/{session_id}", response_model=AppLogSessionDetail)
 def get_app_session(session_id: int, db: Session = Depends(get_db)):
@@ -173,19 +254,91 @@ def get_app_session(session_id: int, db: Session = Depends(get_db)):
                 ended_at=c.ended_at,
                 log_excerpt=c.log_excerpt,
                 source_function=c.source_function,
+                source_file=c.source_file,
+                source_line=c.source_line,
+                call_chain_json=c.call_chain_json,
             )
             for c in calls
         ],
     )
 
 
-# ── AI analysis ───────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 4 — Index source repo
+# ─────────────────────────────────────────────────────────────────────────────
 
-@router.post("/app-logs/sessions/{session_id}/analyse", response_model=AppLogAnalyseResponse)
-def analyse_app_session(session_id: int, db: Session = Depends(get_db)):
+@router.post("/app-logs/sessions/{session_id}/index-source")
+def index_source_for_session(
+    session_id: int,
+    payload: Annotated[dict, Body()] = {},
+    db: Session = Depends(get_db),
+):
     """
-    Run AI analysis on the parsed function calls for this session.
-    Calls the Anthropic API and stores a JSON analysis blob on the session.
+    Trigger AST indexing for this session's source repository.
+
+    Body (optional): `{"github_url": "https://github.com/owner/repo"}`
+
+    If `github_url` is provided it overrides the one stored on the session.
+    Reuses the existing CodeIndexer — just points it at a TrackedRepository.
+    """
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    github_url = (payload.get("github_url") or session.source_repo or "").strip()
+    if not github_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a github_url in the request body or set source_repo on the session.",
+        )
+
+    # Update session.source_repo if a new URL was given
+    if payload.get("github_url") and payload["github_url"] != session.source_repo:
+        session.source_repo = github_url
+        db.commit()
+
+    # Parse owner/repo
+    from app.services.app_trace_correlator import _parse_github_url
+    repo_name = _parse_github_url(github_url)
+    if not repo_name:
+        raise HTTPException(status_code=422, detail=f"Cannot parse GitHub URL: {github_url}")
+
+    # Ensure repo is tracked
+    from app.db.repository import TrackedRepoRepository
+    repo_store = TrackedRepoRepository(db)
+    if not repo_store.exists(repo_name):
+        try:
+            repo_store.create(repo_name)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to track repo: {e}")
+
+    repo = repo_store.get_by_full_name(repo_name)
+
+    # Trigger indexing
+    try:
+        from app.services.ast_parser import CodeIndexer
+        indexer = CodeIndexer(db)
+        result = indexer.index_repo(repo.id, repo_name)
+        return {
+            "status": "completed",
+            "repo": repo_name,
+            "commit_sha": result.commit_sha,
+            "total_functions": result.total_functions,
+        }
+    except Exception as e:
+        logger.error("Source indexing failed for session %d: %s", session_id, e)
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 4 — Source trace
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/app-logs/sessions/{session_id}/trace", response_model=AppTraceResponse)
+def get_app_trace(session_id: int, db: Session = Depends(get_db)):
+    """
+    Return source-correlated function calls for a session.
+    Runs correlation on demand (idempotent — re-correlates each call).
     """
     session = db.get(AppLogSession, session_id)
     if not session:
@@ -193,111 +346,118 @@ def analyse_app_session(session_id: int, db: Session = Depends(get_db)):
     if session.status != "completed":
         raise HTTPException(
             status_code=400,
-            detail=f"Session is not completed (status={session.status}). Ingest it first.",
+            detail=f"Session not completed (status={session.status})",
         )
 
-    # Gather top slowest calls for context
-    calls = (
-        db.query(AppFunctionCall)
-        .filter(AppFunctionCall.session_id == session_id)
-        .order_by(AppFunctionCall.duration_ms.desc())
-        .limit(20)
-        .all()
+    from app.services.app_trace_correlator import AppTraceCorrelator
+    try:
+        correlator = AppTraceCorrelator(db)
+        return correlator.correlate_session(session_id)
+    except Exception as e:
+        logger.error("Trace correlation failed for session %d: %s", session_id, e)
+        raise HTTPException(status_code=500, detail=f"Correlation failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 5 — AI Analysis
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _analysis_to_response(analysis: Analysis) -> AnalysisResponse:
+    import json as _json
+    anti = []
+    if analysis.anti_patterns_json:
+        try: anti = _json.loads(analysis.anti_patterns_json)
+        except _json.JSONDecodeError: pass
+
+    return AnalysisResponse(
+        id=analysis.id,
+        pipeline_run_id=analysis.pipeline_run_id or 0,
+        repository_id=analysis.repository_id or 0,
+        status=analysis.status,
+        root_cause=analysis.root_cause,
+        primary_bottleneck=analysis.primary_bottleneck,
+        anti_patterns=anti,
+        estimated_total_saving_ms=analysis.estimated_total_saving_ms,
+        suggestions=[
+            SuggestionResponse(
+                id=s.id,
+                rank=s.rank,
+                title=s.title,
+                description=s.description,
+                target_function=s.target_function,
+                target_file=s.target_file,
+                estimated_saving_ms=s.estimated_saving_ms,
+                effort=s.effort,
+                diff_hint=s.diff_hint,
+                enriched_diff=s.enriched_diff,
+                confidence_score=s.confidence_score,
+                anti_pattern=s.anti_pattern,
+            )
+            for s in (analysis.suggestions or [])
+        ],
+        llm_model=analysis.llm_model,
+        created_at=analysis.created_at,
+        completed_at=analysis.completed_at,
     )
 
-    if not calls:
+
+@router.post(
+    "/app-logs/sessions/{session_id}/analyse",
+    response_model=AnalysisResponse,
+)
+def analyse_app_session(
+    session_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+):
+    """
+    Run AI performance analysis on this session.
+    Creates Analysis + AnalysisSuggestion rows (same schema as CI/CD analyses).
+    Use `?force=true` to re-run even if an analysis already exists.
+    """
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    if session.status != "completed":
         raise HTTPException(
-            status_code=400, detail="No function calls parsed — nothing to analyse."
+            status_code=400,
+            detail=f"Session not completed (status={session.status}). Ingest it first.",
+        )
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured. Set it in .env to enable AI analysis.",
         )
 
-    # Build per-function aggregates for the prompt
-    from collections import defaultdict
-
-    agg: dict[str, dict] = defaultdict(lambda: {"count": 0, "total_ms": 0, "max_ms": 0})
-    for c in calls:
-        a = agg[c.function_name]
-        a["count"] += 1
-        a["total_ms"] += c.duration_ms
-        a["max_ms"] = max(a["max_ms"], c.duration_ms)
-
-    top_funcs = sorted(agg.items(), key=lambda x: x[1]["total_ms"], reverse=True)[:10]
-
-    prompt_lines = [
-        f"You are a performance engineer analysing logs from the application '{session.app_name}'.",
-        f"Log format: {session.log_format}.",
-        f"Total captured duration: {session.total_duration_ms} ms across {session.total_calls} function calls.",
-        "",
-        "Top slowest functions (by total time):",
-    ]
-    for rank, (fn, stats) in enumerate(top_funcs, 1):
-        avg = stats["total_ms"] // max(stats["count"], 1)
-        prompt_lines.append(
-            f"  {rank}. {fn}: calls={stats['count']}, "
-            f"total={stats['total_ms']}ms, avg={avg}ms, max={stats['max_ms']}ms"
-        )
-
-    # Sample log excerpts for top 3 functions
-    top3_names = [fn for fn, _ in top_funcs[:3]]
-    for fn in top3_names:
-        sample = next(
-            (c.log_excerpt for c in calls if c.function_name == fn and c.log_excerpt), None
-        )
-        if sample:
-            prompt_lines += ["", f"Log excerpt for '{fn}':", sample[:500]]
-
-    prompt_lines += [
-        "",
-        "Provide a concise JSON response with the following schema:",
-        '{',
-        '  "root_cause": "<one sentence>",',
-        '  "primary_bottleneck": "<function name>",',
-        '  "anti_patterns": ["<pattern1>", ...],',
-        '  "suggestions": [',
-        '    {',
-        '      "rank": 1,',
-        '      "title": "<short title>",',
-        '      "description": "<actionable fix>",',
-        '      "target_function": "<fn>",',
-        '      "estimated_saving_ms": <int>,',
-        '      "effort": "low|medium|high"',
-        '    }',
-        '  ],',
-        '  "estimated_total_saving_ms": <int>',
-        '}',
-        "Return ONLY the JSON — no prose.",
-    ]
-
-    prompt = "\n".join(prompt_lines)
-
-    # Call LLM
+    from app.services.app_ai_engine import AppAIEngine
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=settings.LLM_MODEL,
-            max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.content[0].text.strip()
-        # Strip markdown code fence if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        # Validate JSON
-        json.loads(raw)
-        session.ai_analysis = raw
-        db.commit()
-        return AppLogAnalyseResponse(
-            session_id=session_id,
-            status="completed",
-            ai_analysis=raw,
-            message="AI analysis complete.",
-        )
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="anthropic SDK not installed. Run: pip install anthropic",
-        )
+        engine = AppAIEngine(db)
+        analysis = engine.analyse_session(session_id, force=force)
+        return _analysis_to_response(analysis)
     except Exception as e:
         logger.error("AI analysis failed for session %d: %s", session_id, e)
-        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/app-logs/sessions/{session_id}/analysis",
+    response_model=AnalysisResponse,
+)
+def get_app_session_analysis(session_id: int, db: Session = Depends(get_db)):
+    """Return the most recent AI analysis for this session."""
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    analysis = (
+        db.query(Analysis)
+        .filter(Analysis.app_log_session_id == session_id)
+        .order_by(Analysis.created_at.desc())
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No analysis found for session {session_id}. Run POST /analyse first.",
+        )
+    return _analysis_to_response(analysis)

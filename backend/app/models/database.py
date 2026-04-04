@@ -187,11 +187,15 @@ class Analysis(Base):
     __tablename__ = "analyses"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # Either pipeline_run_id (CI/CD) or app_log_session_id (app logs) is set
     pipeline_run_id = Column(
-        Integer, ForeignKey("pipeline_runs.id"), nullable=False
+        Integer, ForeignKey("pipeline_runs.id"), nullable=True
     )
     repository_id = Column(
-        Integer, ForeignKey("tracked_repositories.id"), nullable=False
+        Integer, ForeignKey("tracked_repositories.id"), nullable=True
+    )
+    app_log_session_id = Column(
+        Integer, ForeignKey("app_log_sessions.id"), nullable=True
     )
     status = Column(String(32), default="pending", nullable=False)
     root_cause = Column(Text, nullable=True)
@@ -208,6 +212,7 @@ class Analysis(Base):
 
     pipeline_run = relationship("PipelineRun")
     repository = relationship("TrackedRepository")
+    app_log_session = relationship("AppLogSession")
     suggestions = relationship(
         "AnalysisSuggestion", back_populates="analysis", cascade="all, delete-orphan"
     )
@@ -322,6 +327,11 @@ class AppFunctionCall(Base):
     log_excerpt = Column(Text, nullable=True)                   # surrounding log lines
     source_function = Column(String(512), nullable=True)        # correlated source symbol
 
+    # Source correlation fields (filled by AppTraceCorrelator)
+    source_file      = Column(String(1024), nullable=True)
+    source_line      = Column(Integer, nullable=True)
+    call_chain_json  = Column(Text, nullable=True)   # JSON list of {fn, file, line}
+
     session = relationship("AppLogSession", back_populates="function_calls")
 
     __table_args__ = (
@@ -331,3 +341,25 @@ class AppFunctionCall(Base):
 
     def __repr__(self) -> str:
         return f"<AppFunctionCall {self.function_name} #{self.call_number} {self.duration_ms}ms>"
+
+
+class LogFormatSchema(Base):
+    """Cached AI-inferred (or user-defined) log format schemas."""
+
+    __tablename__ = "log_format_schemas"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    format_name = Column(String(128), nullable=False)  # "ai_inferred" | "custom" | etc.
+    strategy    = Column(String(32),  nullable=False)  # "registry" | "ai_inferred" | "user_custom"
+    schema_json = Column(Text, nullable=True)          # JSON with regex patterns
+    sample_lines = Column(Text, nullable=True)         # first 20 lines used for detection
+    app_name    = Column(String(255), nullable=True)   # which app this was inferred for
+    used_count  = Column(Integer, default=1)
+    created_at  = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_log_schema_app", "app_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<LogFormatSchema {self.format_name} app={self.app_name}>"

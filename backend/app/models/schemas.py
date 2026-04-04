@@ -335,6 +335,9 @@ class AppFunctionCallResponse(BaseModel):
     ended_at: datetime | None = None
     log_excerpt: str | None = None
     source_function: str | None = None
+    source_file: str | None = None
+    source_line: int | None = None
+    call_chain_json: str | None = None
 
 
 class AppLogSessionResponse(BaseModel):
@@ -368,4 +371,41 @@ class AppLogAnalyseResponse(BaseModel):
     session_id: int
     status: str
     ai_analysis: str | None = None
+    analysis_id: int | None = None
     message: str
+
+
+# ── Phase 3: detect-format ───────────────────────────────────────────────────
+
+class SampleRecord(BaseModel):
+    func_name:   str
+    duration_ms: int
+    log_excerpt: str
+
+
+class DetectFormatResponse(BaseModel):
+    format:         str
+    confidence:     float
+    sample_records: list[SampleRecord] = []
+
+
+# ── Phase 4: source trace ────────────────────────────────────────────────────
+
+class CorrelatedCallResponse(BaseModel):
+    id:              int
+    function_name:   str
+    duration_ms:     int
+    source_function: str | None = None
+    source_file:     str | None = None
+    source_line:     int | None = None
+    call_chain:      list[dict] = []
+    log_excerpt:     str | None = None
+
+
+class AppTraceResponse(BaseModel):
+    session_id:     int
+    app_name:       str
+    total_calls:    int
+    matched_calls:  int
+    match_rate:     float
+    calls:          list[CorrelatedCallResponse] = []

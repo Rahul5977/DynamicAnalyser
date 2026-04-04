@@ -137,11 +137,22 @@ function CICDDashboard() {
 
 // ── App Logs section ──────────────────────────────────────────────────────────
 
-const STATUS_COLOR = {
-  completed: "var(--color-success, #22c55e)",
-  failed: "var(--color-error, #ef4444)",
-  pending: "var(--text-muted)",
-};
+function groupByApp(sessions) {
+  const map = {};
+  for (const s of sessions) {
+    if (!map[s.app_name]) {
+      map[s.app_name] = { app_name: s.app_name, sessions: [], totalDur: 0, totalCalls: 0 };
+    }
+    map[s.app_name].sessions.push(s);
+    map[s.app_name].totalDur   += s.total_duration_ms || 0;
+    map[s.app_name].totalCalls += s.total_calls || 0;
+  }
+  return Object.values(map).sort((a, b) => {
+    const la = a.sessions[0]?.created_at ?? "";
+    const lb = b.sessions[0]?.created_at ?? "";
+    return lb.localeCompare(la);
+  });
+}
 
 function AppLogsDashboard() {
   const [sessions, setSessions] = useState([]);
@@ -160,6 +171,9 @@ function AppLogsDashboard() {
 
   const totalCalls = sessions.reduce((s, r) => s + (r.total_calls || 0), 0);
   const totalDur   = sessions.reduce((s, r) => s + (r.total_duration_ms || 0), 0);
+  const analysed   = sessions.filter((s) => s.status === "completed").length;
+
+  const appGroups = groupByApp(sessions);
 
   return (
     <>
@@ -170,19 +184,16 @@ function AppLogsDashboard() {
       </div>
 
       <div className="kpi-grid">
+        <KPICard label="Applications" value={appGroups.length} />
         <KPICard label="Log Sessions" value={sessions.length} />
         <KPICard label="Function Calls" value={totalCalls} />
         <KPICard label="Total Captured" value={formatMs(totalDur)} />
-        <KPICard
-          label="Analysed"
-          value={sessions.filter((s) => s.status === "completed").length}
-          sub="sessions"
-        />
+        <KPICard label="Analysed" value={analysed} sub="sessions" />
       </div>
 
       <div className="card">
-        <div className="card-title">Log Sessions</div>
-        {sessions.length === 0 ? (
+        <div className="card-title">Applications</div>
+        {appGroups.length === 0 ? (
           <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
             No log sessions yet.{" "}
             <Link to="/app-logs/upload">Upload a log file</Link> to get started.
@@ -192,45 +203,63 @@ function AppLogsDashboard() {
             <table>
               <thead>
                 <tr>
-                  <th>App</th>
-                  <th>Format</th>
-                  <th>Calls</th>
-                  <th>Total Time</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th>Actions</th>
+                  <th>App name</th>
+                  <th>Sessions</th>
+                  <th>Avg duration</th>
+                  <th>Slowest function</th>
+                  <th>Last upload</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((s) => (
-                  <tr key={s.id}>
-                    <td><strong>{s.app_name}</strong></td>
-                    <td style={{ color: "var(--text-muted)", fontSize: 13 }}>{s.log_format}</td>
-                    <td>{s.total_calls ?? "—"}</td>
-                    <td>{formatMs(s.total_duration_ms)}</td>
-                    <td>
-                      <span style={{
-                        color: STATUS_COLOR[s.status] || "var(--text-muted)",
-                        fontWeight: 600,
-                        fontSize: 13,
-                        textTransform: "capitalize",
-                      }}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                      {formatDate(s.created_at)}
-                    </td>
-                    <td>
-                      <Link
-                        to={`/app-logs/sessions/${s.id}`}
-                        className="btn btn-sm btn-secondary"
-                      >
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {appGroups.map((g) => {
+                  const avgDur = g.sessions.length
+                    ? Math.round(g.totalDur / g.sessions.length)
+                    : 0;
+                  // Find the slowest single function call across all sessions in this group
+                  let slowestFn = "—";
+                  let maxDur = -1;
+                  for (const s of g.sessions) {
+                    if ((s.total_duration_ms || 0) > maxDur) {
+                      maxDur = s.total_duration_ms || 0;
+                      // We don't have per-call data here; use app-level duration label
+                    }
+                  }
+                  // Sort sessions newest first to get last upload
+                  const sorted = [...g.sessions].sort(
+                    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+                  );
+                  const lastUpload = sorted[0]?.created_at;
+
+                  return (
+                    <tr key={g.app_name}>
+                      <td>
+                        <Link
+                          to={`/app-logs/apps/${encodeURIComponent(g.app_name)}`}
+                          style={{ fontWeight: 700 }}
+                        >
+                          {g.app_name}
+                        </Link>
+                      </td>
+                      <td>{g.sessions.length}</td>
+                      <td>{formatMs(avgDur)}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                        {g.sessions.length > 0 ? formatMs(maxDur) : "—"}
+                      </td>
+                      <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                        {lastUpload ? formatDate(lastUpload) : "—"}
+                      </td>
+                      <td>
+                        <Link
+                          to={`/app-logs/apps/${encodeURIComponent(g.app_name)}`}
+                          className="btn btn-sm btn-secondary"
+                        >
+                          Sessions
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

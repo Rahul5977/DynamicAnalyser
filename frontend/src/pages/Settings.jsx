@@ -108,6 +108,57 @@ export default function Settings() {
         )}
       </div>
 
+      {/* App Log Format Guide */}
+      <div className="card">
+        <div className="card-title">Supported Log Formats</div>
+        <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 12 }}>
+          Upload any of these log types on the{" "}
+          <a href="/app-logs/upload">Upload App Log</a> page.
+          Auto-detect mode works for all formats shown here.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Format</th>
+                <th>Example line</th>
+                <th style={{ whiteSpace: "nowrap" }}>Auto-detected?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["JSON lines",      `{"func":"process_packet","elapsed_ms":42,"event":"exit"}`,              true],
+                ["Spring Boot",     `2024-03-19 10:32:01.456 INFO [main] c.e.Svc - fetchUsers() in 1234ms`, true],
+                ["Ruby on Rails",   `Completed 200 OK in 1234ms (Views: 12ms | ActiveRecord: 890ms)`,       true],
+                ["Syslog (RFC 3164)", `Mar 19 10:32:01 host app[123]: [TRACE] reassemble_stream() start`,   true],
+                ["logfmt (Go/Rust)", `time=2024-01-01T10:00:00Z func=handle_request duration=56ms`,         true],
+                ["tshark / Wireshark", `dissect_tcp  elapsed=0.342s`,                                       true],
+                ["ENTER / EXIT pairs", `ENTER processPayment  …  EXIT processPayment (2345ms)`,             true],
+                ["Heuristic fallback", `[2024-01-01] parse_frame took 12.3ms`,                              true],
+                ["Custom regex",    `Named groups: func, duration, unit, timestamp, event`,                 false],
+              ].map(([fmt, ex, auto]) => (
+                <tr key={fmt}>
+                  <td style={{ fontWeight: 600, whiteSpace: "nowrap", padding: "6px 8px" }}>{fmt}</td>
+                  <td style={{
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    wordBreak: "break-all",
+                    padding: "6px 8px",
+                  }}>{ex}</td>
+                  <td style={{ textAlign: "center", padding: "6px 8px" }}>
+                    <span className={`badge ${auto ? "badge-success" : ""}`}
+                      style={auto ? {} : { background: "var(--bg)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      {auto ? "Yes" : "Manual"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Webhook Configuration */}
       <div className="card">
         <div className="card-title">GitHub Webhook Configuration</div>

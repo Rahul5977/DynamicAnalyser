@@ -88,5 +88,29 @@ export const listAppSessions = () => request("/app-logs/sessions");
 
 export const getAppSession = (id) => request(`/app-logs/sessions/${id}`);
 
-export const analyseAppSession = (id) =>
-  request(`/app-logs/sessions/${id}/analyse`, { method: "POST" });
+// Phase 3 – detect format from first N lines (called before upload)
+export const detectAppLogFormat = (lines, appName = "", customPattern = "") =>
+  request("/app-logs/detect-format", {
+    method: "POST",
+    body: JSON.stringify({ lines, app_name: appName, custom_pattern: customPattern }),
+  });
+
+// Phase 4 – source correlation
+export const indexSourceForSession = (id, githubUrl = "") =>
+  request(`/app-logs/sessions/${id}/index-source`, {
+    method: "POST",
+    body: JSON.stringify({ github_url: githubUrl }),
+  });
+
+export const getAppTrace = (id) => request(`/app-logs/sessions/${id}/trace`);
+
+// Phase 5 – AI analysis (returns full AnalysisResponse like CI/CD)
+export const analyseAppSession = (id, force = false) =>
+  request(`/app-logs/sessions/${id}/analyse?force=${force}`, { method: "POST" });
+
+export const getAppSessionAnalysis = (id) =>
+  request(`/app-logs/sessions/${id}/analysis`);
+
+// Aliases used by AppLogSession.jsx
+export const getAppAnalysis    = getAppSessionAnalysis;
+export const detectLogFormat   = detectAppLogFormat;

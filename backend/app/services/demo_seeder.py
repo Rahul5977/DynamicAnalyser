@@ -17,6 +17,8 @@ from app.models.database import (
     IndexedLogCall,
     Analysis,
     AnalysisSuggestion,
+    AppLogSession,
+    AppFunctionCall,
 )
 
 
@@ -48,12 +50,129 @@ class DemoSeeder:
         runs = self._create_runs(repo, count=20)
         code_idx = self._create_code_index(repo)
         analyses = self._create_analyses(repo, runs)
+        app_result = self.seed_app_demo()
 
         return {
             "repos_created": 1,
             "runs_created": len(runs),
             "analyses_created": len(analyses),
+            "app_sessions_created": app_result["sessions_created"],
         }
+
+    def seed_app_demo(self) -> dict:
+        """Seed a tshark demo AppLogSession with pre-built analysis."""
+        existing = (
+            self.db.query(AppLogSession)
+            .filter(AppLogSession.app_name == "tshark-demo")
+            .first()
+        )
+        if existing:
+            return {"sessions_created": 0}
+
+        now = datetime.datetime.utcnow()
+
+        _CALLS = [
+            # (function_name, call_number, duration_ms, log_excerpt)
+            ("dissect_tcp",        1,   342, "dissect_tcp  elapsed=0.342s"),
+            ("parse_packet",       2,  1200, "parse_packet  elapsed=1.200s"),
+            ("filter_expression",  3,   890, "filter_expression  elapsed=0.890s"),
+            ("reassemble_stream",  4, 20334, "reassemble_stream  elapsed=20.334s  ← bottleneck"),
+            ("output_packet",      5,   456, "output_packet  elapsed=0.456s"),
+            ("write_pcap",         6,   778, "write_pcap  elapsed=0.778s"),
+        ]
+        total_ms = sum(c[2] for c in _CALLS)
+
+        session = AppLogSession(
+            app_name="tshark-demo",
+            log_file_path="demo/tshark_demo.log",
+            log_format="tshark",
+            source_repo=None,
+            custom_pattern=None,
+            status="completed",
+            total_calls=len(_CALLS),
+            total_duration_ms=total_ms,
+            created_at=now - datetime.timedelta(hours=2),
+        )
+        self.db.add(session)
+        self.db.flush()
+
+        call_start = now - datetime.timedelta(hours=2, seconds=30)
+        for func, call_num, dur_ms, excerpt in _CALLS:
+            started = call_start
+            ended   = call_start + datetime.timedelta(milliseconds=dur_ms)
+            self.db.add(AppFunctionCall(
+                session_id=session.id,
+                function_name=func,
+                call_number=call_num,
+                duration_ms=dur_ms,
+                started_at=started,
+                ended_at=ended,
+                log_excerpt=excerpt,
+            ))
+            call_start = ended
+
+        # Pre-built analysis
+        analysis = Analysis(
+            app_log_session_id=session.id,
+            repository_id=None,
+            pipeline_run_id=None,
+            status="completed",
+            root_cause=(
+                "reassemble_stream() dominates total execution at 20,334 ms (84% of runtime). "
+                "The function accumulates all packet fragments into an unbounded in-memory buffer "
+                "before flushing, causing excessive allocation and GC pressure on large captures."
+            ),
+            primary_bottleneck="reassemble_stream",
+            anti_patterns_json='["Unbounded accumulation", "Blocking I/O"]',
+            estimated_total_saving_ms=12000,
+            llm_model=get_settings().LLM_MODEL,
+            created_at=now - datetime.timedelta(hours=1, minutes=55),
+            completed_at=now - datetime.timedelta(hours=1, minutes=54),
+        )
+        self.db.add(analysis)
+        self.db.flush()
+
+        self.db.add(AnalysisSuggestion(
+            analysis_id=analysis.id,
+            rank=1,
+            title="Switch to ring-buffer streaming in reassemble_stream",
+            description=(
+                "Replace the full-capture accumulation with a fixed-size ring buffer "
+                "(e.g. 64 KB). Flush to disk each time the buffer fills rather than "
+                "holding the entire reassembled stream in RAM. This eliminates the "
+                "O(n) allocation cost and keeps memory usage constant."
+            ),
+            target_function="reassemble_stream",
+            target_file="epan/reassemble.c",
+            estimated_saving_ms=12000,
+            effort="medium",
+            diff_hint=(
+                "Before: stream_buf = g_byte_array_append(stream_buf, frag, frag_len);\n"
+                "After:  ring_buffer_write(ring_buf, frag, frag_len);  // flushes at capacity"
+            ),
+            confidence_score=0.88,
+            anti_pattern="Unbounded accumulation",
+        ))
+        self.db.add(AnalysisSuggestion(
+            analysis_id=analysis.id,
+            rank=2,
+            title="Parallelise parse_packet with worker threads",
+            description=(
+                "parse_packet() (1,200 ms) is CPU-bound and stateless per packet. "
+                "Distribute packet batches across a thread pool sized to available CPUs."
+            ),
+            target_function="parse_packet",
+            target_file="epan/packet.c",
+            estimated_saving_ms=800,
+            effort="high",
+            diff_hint="Use g_thread_pool_push() to dispatch parse jobs.",
+            confidence_score=0.72,
+            anti_pattern="Blocking I/O",
+        ))
+
+        self.db.commit()
+        logger.info("Seeded tshark-demo app session id=%d", session.id)
+        return {"sessions_created": 1}
 
     def _get_or_create_repo(self) -> TrackedRepository:
         existing = (

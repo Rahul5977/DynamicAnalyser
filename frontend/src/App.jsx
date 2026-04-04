@@ -9,6 +9,7 @@ import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
 import AppLogUpload from "./pages/AppLogUpload";
 import AppLogSession from "./pages/AppLogSession";
+import AppLogsByApp from "./pages/AppLogsByApp";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/app-logs/upload" element={<AppLogUpload />} />
           <Route path="/app-logs/sessions/:id" element={<AppLogSession />} />
+          <Route path="/app-logs/apps/:appName" element={<AppLogsByApp />} />
         </Routes>
       </Layout>
     </BrowserRouter>
