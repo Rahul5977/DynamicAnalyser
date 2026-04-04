@@ -272,3 +272,62 @@ class AnalysisFeedback(Base):
     __table_args__ = (
         Index("ix_feedback_analysis", "analysis_id"),
     )
+
+
+# ── App Log Analysis Tables ───────────────────────────────────────────────────
+
+class AppLogSession(Base):
+    """A single uploaded application log file to be analysed."""
+
+    __tablename__ = "app_log_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    app_name = Column(String(255), nullable=False)          # e.g. "nginx", "tshark"
+    log_file_path = Column(String(512), nullable=False)     # saved upload path
+    log_format = Column(String(64), nullable=False)         # auto|tshark|syslog|json|custom
+    source_repo = Column(String(255), nullable=True)        # GitHub URL or None
+    custom_pattern = Column(String(512), nullable=True)     # user regex for custom format
+    total_duration_ms = Column(Integer, nullable=True)      # sum of all function call durations
+    total_calls = Column(Integer, nullable=True)            # number of parsed function calls
+    status = Column(String(32), nullable=False, default="pending")  # pending|completed|failed
+    error_message = Column(Text, nullable=True)
+    ai_analysis = Column(Text, nullable=True)               # JSON blob from LLM
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    function_calls = relationship(
+        "AppFunctionCall", back_populates="session", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_app_session_status", "status"),
+        Index("ix_app_session_app_name", "app_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AppLogSession id={self.id} app={self.app_name} status={self.status}>"
+
+
+class AppFunctionCall(Base):
+    """A single function-call timing entry extracted from an application log."""
+
+    __tablename__ = "app_function_calls"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("app_log_sessions.id"), nullable=False)
+    function_name = Column(String(512), nullable=False)
+    call_number = Column(Integer, nullable=False, default=1)    # nth call of this function
+    duration_ms = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    log_excerpt = Column(Text, nullable=True)                   # surrounding log lines
+    source_function = Column(String(512), nullable=True)        # correlated source symbol
+
+    session = relationship("AppLogSession", back_populates="function_calls")
+
+    __table_args__ = (
+        Index("ix_appcall_session", "session_id"),
+        Index("ix_appcall_func_name", "session_id", "function_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AppFunctionCall {self.function_name} #{self.call_number} {self.duration_ms}ms>"

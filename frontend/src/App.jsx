@@ -7,6 +7,8 @@ import RunDetail from "./pages/RunDetail";
 import RepoDetail from "./pages/RepoDetail";
 import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
+import AppLogUpload from "./pages/AppLogUpload";
+import AppLogSession from "./pages/AppLogSession";
 
 export default function App() {
   return (
@@ -19,6 +21,8 @@ export default function App() {
           <Route path="/repos/:owner/:name" element={<RepoDetail />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/app-logs/upload" element={<AppLogUpload />} />
+          <Route path="/app-logs/sessions/:id" element={<AppLogSession />} />
         </Routes>
       </Layout>
     </BrowserRouter>

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     DASHBOARD_URL: str = "http://localhost:5173"
     DEMO_MODE: bool = False
 
+    APP_LOG_UPLOAD_DIR: str = "./uploads/app_logs"
+    APP_LOG_MAX_SIZE_MB: int = 50
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -320,3 +320,52 @@ class DemoSeedResponse(BaseModel):
     runs_created: int
     analyses_created: int
     message: str
+
+
+# ── App Log Schemas ───────────────────────────────────────────────────────────
+
+class AppFunctionCallResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    function_name: str
+    call_number: int
+    duration_ms: int
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    log_excerpt: str | None = None
+    source_function: str | None = None
+
+
+class AppLogSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    app_name: str
+    log_format: str
+    source_repo: str | None = None
+    total_duration_ms: int | None = None
+    total_calls: int | None = None
+    status: str
+    created_at: datetime
+
+
+class AppLogSessionDetail(AppLogSessionResponse):
+    error_message: str | None = None
+    ai_analysis: str | None = None
+    function_calls: list[AppFunctionCallResponse] = []
+
+
+class AppLogUploadResponse(BaseModel):
+    session_id: int
+    app_name: str
+    log_format: str
+    status: str
+    message: str
+
+
+class AppLogAnalyseResponse(BaseModel):
+    session_id: int
+    status: str
+    ai_analysis: str | None = None
+    message: str

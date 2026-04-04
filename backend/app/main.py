@@ -10,6 +10,7 @@ from app.core.logging import logger
 from app.models.database import Base
 from app.db.session import engine
 from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard
+from app.api.routes import app_logs
 
 
 @asynccontextmanager
@@ -63,3 +64,4 @@ app.include_router(runs.router, prefix="/api", tags=["runs"])
 app.include_router(analysis.router, prefix="/api", tags=["analysis"])
 app.include_router(ai_analysis.router, prefix="/api", tags=["ai-analysis"])
 app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
+app.include_router(app_logs.router, prefix="/api", tags=["app-logs"])

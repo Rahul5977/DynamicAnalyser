@@ -70,3 +70,23 @@ export const indexRepo = (owner, name) =>
 // Demo
 export const seedDemo = () =>
   request("/demo/seed", { method: "POST" });
+
+// ── App Log Analysis ──────────────────────────────────────────────────────────
+
+export const uploadAppLog = (formData) =>
+  fetch(`${BASE}/app-logs/upload`, { method: "POST", body: formData }).then(
+    async (r) => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: r.statusText }));
+        throw new Error(err.detail || err.error || r.statusText);
+      }
+      return r.json();
+    }
+  );
+
+export const listAppSessions = () => request("/app-logs/sessions");
+
+export const getAppSession = (id) => request(`/app-logs/sessions/${id}`);
+
+export const analyseAppSession = (id) =>
+  request(`/app-logs/sessions/${id}/analyse`, { method: "POST" });
