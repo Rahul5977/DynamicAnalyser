@@ -454,6 +454,40 @@ class AnalysisRepository:
             logger.error("Failed to save feedback: %s", e)
             raise DatabaseError("Failed to save feedback", detail=str(e)) from e
 
+    def get_feedback_summary(self, repo_id: int, limit: int = 15) -> list[dict]:
+        """
+        Return recent developer feedback for a repository, joined with the
+        suggestion and analysis it belongs to.
+
+        Each entry has keys:
+          verdict, suggestion_title, anti_pattern, estimated_saving_ms, comment
+        """
+        rows = (
+            self.db.query(
+                AnalysisFeedback.verdict,
+                AnalysisFeedback.comment,
+                AnalysisSuggestion.title,
+                AnalysisSuggestion.anti_pattern,
+                AnalysisSuggestion.estimated_saving_ms,
+            )
+            .join(AnalysisSuggestion, AnalysisFeedback.suggestion_id == AnalysisSuggestion.id)
+            .join(Analysis, AnalysisFeedback.analysis_id == Analysis.id)
+            .filter(Analysis.repository_id == repo_id)
+            .order_by(desc(AnalysisFeedback.created_at))
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "verdict": r.verdict,
+                "suggestion_title": r.title,
+                "anti_pattern": r.anti_pattern or "",
+                "estimated_saving_ms": r.estimated_saving_ms,
+                "comment": r.comment or "",
+            }
+            for r in rows
+        ]
+
     def count_past_anti_pattern(self, repo_id: int, anti_pattern: str) -> int:
         """Count how many past analyses flagged a given anti-pattern."""
         rows = (

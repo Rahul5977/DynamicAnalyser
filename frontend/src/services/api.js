@@ -86,6 +86,9 @@ export const uploadAppLog = (formData) =>
 
 export const listAppSessions = () => request("/app-logs/sessions");
 
+export const deleteAllAppSessions = () =>
+  request("/app-logs/sessions/all", { method: "DELETE" });
+
 export const getAppSession = (id) => request(`/app-logs/sessions/${id}`);
 
 // Phase 3 – detect format from first N lines (called before upload)

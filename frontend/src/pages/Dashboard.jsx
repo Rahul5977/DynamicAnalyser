@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDashboardSummary, listRepos, seedDemo, listAppSessions } from "../services/api";
+import { getDashboardSummary, listRepos, seedDemo, listAppSessions, deleteAllAppSessions } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
 
@@ -158,13 +158,32 @@ function AppLogsDashboard() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     listAppSessions()
       .then(setSessions)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm(`Delete all ${sessions.length} session(s) and their analyses? This cannot be undone.`))
+      return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteAllAppSessions();
+      setSessions([]);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (loading) return <div className="loading">Loading app log sessions...</div>;
   if (error) return <div className="error-msg">{error}</div>;
@@ -177,7 +196,17 @@ function AppLogsDashboard() {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
+        {sessions.length > 0 && (
+          <button
+            className="btn btn-secondary"
+            onClick={handleDeleteAll}
+            disabled={deleting}
+            style={{ color: "#ef4444", borderColor: "#ef4444" }}
+          >
+            {deleting ? "Deleting…" : `Delete All (${sessions.length})`}
+          </button>
+        )}
         <Link to="/app-logs/upload" className="btn btn-primary">
           + Upload Log File
         </Link>

@@ -215,6 +215,46 @@ def list_app_sessions(db: Session = Depends(get_db)):
     )
 
 
+@router.delete("/app-logs/sessions/all", status_code=200)
+def delete_all_app_sessions(db: Session = Depends(get_db)):
+    """
+    Delete every app-log session and all associated function calls and analyses.
+    Returns the count of sessions removed.
+    """
+    from app.models.database import AppFunctionCall, Analysis, AnalysisSuggestion, AnalysisFeedback
+
+    # Collect all session ids first
+    session_ids = [r[0] for r in db.query(AppLogSession.id).all()]
+    if not session_ids:
+        return {"deleted_sessions": 0}
+
+    # Delete dependent analysis rows (feedback → suggestions → analyses)
+    analysis_ids = [
+        r[0] for r in
+        db.query(Analysis.id).filter(Analysis.app_log_session_id.in_(session_ids)).all()
+    ]
+    if analysis_ids:
+        db.query(AnalysisFeedback).filter(
+            AnalysisFeedback.analysis_id.in_(analysis_ids)
+        ).delete(synchronize_session=False)
+        db.query(AnalysisSuggestion).filter(
+            AnalysisSuggestion.analysis_id.in_(analysis_ids)
+        ).delete(synchronize_session=False)
+        db.query(Analysis).filter(
+            Analysis.id.in_(analysis_ids)
+        ).delete(synchronize_session=False)
+
+    # Delete function calls and sessions
+    db.query(AppFunctionCall).filter(
+        AppFunctionCall.session_id.in_(session_ids)
+    ).delete(synchronize_session=False)
+    db.query(AppLogSession).delete(synchronize_session=False)
+
+    db.commit()
+    logger.info("Deleted all %d app-log sessions", len(session_ids))
+    return {"deleted_sessions": len(session_ids)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session detail
 # ─────────────────────────────────────────────────────────────────────────────

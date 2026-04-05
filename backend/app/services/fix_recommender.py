@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import logger
 from app.db.repository import AnalysisRepository, CodeIndexRepository
-from app.models.database import Analysis, AnalysisSuggestion, IndexedFunction
+from app.models.database import Analysis, AnalysisFeedback, AnalysisSuggestion, IndexedFunction
 
 
 class FixRecommender:
@@ -169,7 +169,31 @@ class FixRecommender:
         if 500 <= suggestion.estimated_saving_ms <= 300000:
             score += 0.1
 
-        return min(round(score, 2), 1.0)
+        # Factor 4: Developer feedback history for this anti-pattern on this repo
+        if suggestion.anti_pattern and analysis.repository_id:
+            feedback_rows = (
+                self.db.query(
+                    AnalysisFeedback.verdict,
+                )
+                .join(AnalysisSuggestion, AnalysisFeedback.suggestion_id == AnalysisSuggestion.id)
+                .join(Analysis, AnalysisFeedback.analysis_id == Analysis.id)
+                .filter(
+                    Analysis.repository_id == analysis.repository_id,
+                    AnalysisSuggestion.anti_pattern == suggestion.anti_pattern,
+                )
+                .all()
+            )
+            verdicts = [r.verdict for r in feedback_rows]
+            accepted_count = verdicts.count("accepted")
+            rejected_count = verdicts.count("rejected")
+            # Boost if this anti-pattern has been accepted before for this repo
+            if accepted_count > 0:
+                score += 0.15
+            # Penalise if it has been rejected (only if no countervailing accepts)
+            if rejected_count > 0 and accepted_count == 0:
+                score -= 0.2
+
+        return min(max(round(score, 2), 0.0), 1.0)
 
     def get_repo_insights(self, repo_id: int) -> dict:
         """Aggregate anti-pattern insights across all analyses for a repo."""

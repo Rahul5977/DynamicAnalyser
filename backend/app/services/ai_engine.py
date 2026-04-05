@@ -68,6 +68,7 @@ class AnalysisContext:
     status: str
     conclusion: str | None
     bottlenecks: list[BottleneckContext] = field(default_factory=list)
+    feedback_history: list[dict] = field(default_factory=list)
 
 
 # ── Anti-Pattern Few-Shot Examples ───────────────────────────────
@@ -143,6 +144,48 @@ def _build_user_prompt(ctx: AnalysisContext) -> str:
             lines.append(f"```{lang}")
             lines.append(b.function_source_code)
             lines.append("```")
+
+    # Feedback history section — only emitted when feedback exists
+    if ctx.feedback_history:
+        accepted  = [f for f in ctx.feedback_history if f["verdict"] == "accepted"]
+        rejected  = [f for f in ctx.feedback_history if f["verdict"] == "rejected"]
+        partial   = [f for f in ctx.feedback_history if f["verdict"] == "partial"]
+
+        lines.append("")
+        lines.append("## Developer Feedback on Previous Suggestions")
+        lines.append(
+            "Use this feedback to calibrate your suggestions: "
+            "prioritise approaches that were accepted and avoid those that were rejected."
+        )
+
+        if accepted:
+            lines.append("")
+            lines.append("### Accepted (these kinds of fixes worked well):")
+            for f in accepted:
+                saving = f"{f['estimated_saving_ms']}ms" if f["estimated_saving_ms"] else "?"
+                comment = f" — \"{f['comment']}\"" if f["comment"] else ""
+                lines.append(
+                    f"  - [{f['anti_pattern']}] {f['suggestion_title']} "
+                    f"(~{saving}){comment}"
+                )
+
+        if rejected:
+            lines.append("")
+            lines.append("### Rejected (avoid suggesting these again):")
+            for f in rejected:
+                comment = f" — \"{f['comment']}\"" if f["comment"] else ""
+                lines.append(
+                    f"  - [{f['anti_pattern']}] {f['suggestion_title']}{comment}"
+                )
+
+        if partial:
+            lines.append("")
+            lines.append("### Partial (useful direction but needs refinement):")
+            for f in partial:
+                comment = f" — \"{f['comment']}\"" if f["comment"] else ""
+                lines.append(
+                    f"  - [{f['anti_pattern']}] {f['suggestion_title']}{comment}"
+                )
 
     lines.append("")
     lines.append("## Respond with JSON matching this exact schema:")
@@ -341,6 +384,10 @@ class AIEngine:
                 language=language,
             ))
 
+        # Load recent developer feedback so the LLM can learn from it
+        analysis_store = AnalysisRepository(self.db)
+        feedback_history = analysis_store.get_feedback_summary(repo.id, limit=15)
+
         return AnalysisContext(
             repo_full_name=repo.full_name,
             commit_sha=run.head_sha or "unknown",
@@ -349,6 +396,7 @@ class AIEngine:
             status=run.status,
             conclusion=run.conclusion,
             bottlenecks=bottleneck_contexts,
+            feedback_history=feedback_history,
         )
 
     def _fetch_function_source(
