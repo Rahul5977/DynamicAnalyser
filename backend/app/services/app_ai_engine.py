@@ -33,6 +33,7 @@ class AppLLMSuggestion(BaseModel):
     estimated_saving_ms:  int = Field(ge=0)
     effort:               str = Field(pattern=r"^(low|medium|high)$")
     diff_hint:            str = ""
+    anti_pattern:         str = ""   # must be one of the names listed in anti_patterns
 
 
 class AppLLMResult(BaseModel):
@@ -85,12 +86,15 @@ _APP_SYSTEM_PROMPT = (
     "and optionally the source code and call chain. "
     "Your job: identify real bottlenecks based ONLY on the evidence in the data, "
     "explain why they are slow, and suggest concrete improvements. "
-    "IMPORTANT RULES to avoid hallucination:\n"
+    "IMPORTANT RULES to avoid hallucination and repetition:\n"
     "  - Only name functions that appear in the data provided.\n"
     "  - Do NOT fabricate file paths, line numbers, or code you have not been shown.\n"
     "  - If no source code is provided, keep diff_hint as pseudocode / high-level description.\n"
     "  - Distinguish periodic/scheduled functions (consistent avg interval) from truly slow functions.\n"
     "  - estimated_saving_ms must be ≤ the function's max_ms shown in the data.\n"
+    "  - Each suggestion MUST target a DIFFERENT function and address a DIFFERENT anti-pattern.\n"
+    "  - Do NOT repeat the same anti-pattern name across multiple suggestions.\n"
+    "  - Do NOT give the same advice twice with different wording.\n"
     "Respond in JSON matching the schema provided.\n"
     + _APP_ANTI_PATTERNS
 )
@@ -98,16 +102,17 @@ _APP_SYSTEM_PROMPT = (
 _RESPONSE_SCHEMA = """{
   "root_cause": "one paragraph",
   "primary_bottleneck": "function name",
-  "anti_patterns": ["list of pattern names"],
+  "anti_patterns": ["list of distinct pattern names — each name used ONCE"],
   "suggestions": [
     {
       "title": "short fix title",
-      "description": "what to do and why",
-      "target_function": "function name",
-      "target_file": "relative file path or empty",
+      "description": "what to do and why — unique, specific to this function",
+      "target_function": "function name from the data",
+      "target_file": "relative file path or empty string",
       "estimated_saving_ms": 1500,
       "effort": "low|medium|high",
-      "diff_hint": "before/after pseudocode"
+      "diff_hint": "before/after pseudocode (no real file paths unless provided)",
+      "anti_pattern": "exact name from anti_patterns list — each suggestion MUST use a DIFFERENT name"
     }
   ],
   "estimated_total_saving_ms": 5000
@@ -169,7 +174,11 @@ class AppAIEngine:
                     estimated_saving_ms=s.estimated_saving_ms,
                     effort=s.effort,
                     diff_hint=s.diff_hint or None,
-                    anti_pattern=self._match_anti_pattern(s.title, result.anti_patterns),
+                    # Use AI-provided anti_pattern directly; fall back to keyword match only if missing
+                    anti_pattern=(
+                        s.anti_pattern.strip() if s.anti_pattern.strip()
+                        else self._match_anti_pattern(s.title, result.anti_patterns)
+                    ),
                 )
                 for i, s in enumerate(result.suggestions)
             ]
