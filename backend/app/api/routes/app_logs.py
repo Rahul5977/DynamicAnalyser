@@ -42,10 +42,16 @@ from app.models.schemas import (
     SampleRecord,
     SuggestionResponse,
 )
+from pydantic import BaseModel
+
 from app.services.app_ingester import AppIngester
 from app.services.app_log_parser import parse_to_universal
 
 router = APIRouter()
+
+
+class AppAnalyseRequest(BaseModel):
+    target_functions: list[str] | None = None
 settings = get_settings()
 
 _ALLOWED_FORMATS = {"auto", "unknown", "json", "syslog", "tshark", "logfmt",
@@ -448,12 +454,15 @@ def _analysis_to_response(analysis: Analysis) -> AnalysisResponse:
 def analyse_app_session(
     session_id: int,
     force: bool = False,
+    payload: AppAnalyseRequest | None = Body(default=None),
     db: Session = Depends(get_db),
 ):
     """
     Run AI performance analysis on this session.
     Creates Analysis + AnalysisSuggestion rows (same schema as CI/CD analyses).
     Use `?force=true` to re-run even if an analysis already exists.
+    Body (optional): `{"target_functions": ["funcA", "funcB"]}` — scopes the analysis
+    to only the listed functions; implies force=True.
     """
     session = db.get(AppLogSession, session_id)
     if not session:
@@ -469,10 +478,16 @@ def analyse_app_session(
             detail="ANTHROPIC_API_KEY not configured. Set it in .env to enable AI analysis.",
         )
 
+    target_functions = payload.target_functions if payload else None
+    # When specific functions are targeted, always create a fresh analysis
+    effective_force = force or (target_functions is not None)
+
     from app.services.app_ai_engine import AppAIEngine
     try:
         engine = AppAIEngine(db)
-        analysis = engine.analyse_session(session_id, force=force)
+        analysis = engine.analyse_session(
+            session_id, force=effective_force, target_functions=target_functions
+        )
         return _analysis_to_response(analysis)
     except Exception as e:
         logger.error("AI analysis failed for session %d: %s", session_id, e)

@@ -128,7 +128,12 @@ class AppAIEngine:
         self.db = db
         self._settings = get_settings()
 
-    def analyse_session(self, session_id: int, force: bool = False) -> Analysis:
+    def analyse_session(
+        self,
+        session_id: int,
+        force: bool = False,
+        target_functions: list[str] | None = None,
+    ) -> Analysis:
         """
         Run AI analysis for an app log session.
         Returns the persisted Analysis record (same ORM model as CI/CD analyses).
@@ -160,7 +165,7 @@ class AppAIEngine:
         self.db.refresh(analysis)
 
         try:
-            prompt = self._build_prompt(session)
+            prompt = self._build_prompt(session, target_functions=target_functions)
             result, raw, ptok, ctok = self._call_llm(prompt)
 
             suggestions = [
@@ -208,10 +213,19 @@ class AppAIEngine:
 
     # ── Context building ───────────────────────────────────────────────────────
 
-    def _build_prompt(self, session: AppLogSession) -> str:
-        calls = (
+    def _build_prompt(
+        self,
+        session: AppLogSession,
+        target_functions: list[str] | None = None,
+    ) -> str:
+        query = (
             self.db.query(AppFunctionCall)
             .filter(AppFunctionCall.session_id == session.id)
+        )
+        if target_functions:
+            query = query.filter(AppFunctionCall.function_name.in_(target_functions))
+        calls = (
+            query
             .order_by(AppFunctionCall.duration_ms.desc())
             .limit(50)
             .all()
@@ -232,6 +246,13 @@ class AppAIEngine:
             f"## Application: {session.app_name}",
             f"Log format: {session.log_format}",
             f"Recorded {session.total_calls} function-call timing entries.",
+            *(
+                [
+                    f"Analysis scoped to {len(target_functions)} selected function(s): "
+                    + ", ".join(target_functions),
+                ]
+                if target_functions else []
+            ),
             "",
             "**Important:** Timings come from two sources:",
             "  1. Explicit duration messages in the log (e.g. 'completed in 5787 ms') — "

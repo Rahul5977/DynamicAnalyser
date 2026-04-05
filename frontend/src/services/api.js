@@ -108,8 +108,12 @@ export const indexSourceForSession = (id, githubUrl = "") =>
 export const getAppTrace = (id) => request(`/app-logs/sessions/${id}/trace`);
 
 // Phase 5 – AI analysis (returns full AnalysisResponse like CI/CD)
-export const analyseAppSession = (id, force = false) =>
-  request(`/app-logs/sessions/${id}/analyse?force=${force}`, { method: "POST" });
+// targetFunctions: string[] | null — if provided, scopes the analysis to those functions
+export const analyseAppSession = (id, force = false, targetFunctions = null) =>
+  request(`/app-logs/sessions/${id}/analyse?force=${force}`, {
+    method: "POST",
+    body: JSON.stringify(targetFunctions ? { target_functions: targetFunctions } : {}),
+  });
 
 export const getAppSessionAnalysis = (id) =>
   request(`/app-logs/sessions/${id}/analysis`);

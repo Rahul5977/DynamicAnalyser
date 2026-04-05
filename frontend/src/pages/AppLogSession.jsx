@@ -251,9 +251,154 @@ function SourceTrace({ sessionId, sourceRepo }) {
   );
 }
 
+// ── Function selector table ───────────────────────────────────────────────────
+
+function FunctionSelectorTable({ calls, totalMs, selectedFunctions, onSelectionChange }) {
+  const [search, setSearch] = useState("");
+
+  // Aggregate by function name
+  const byFunc = {};
+  for (const c of calls) {
+    if (!byFunc[c.function_name]) {
+      byFunc[c.function_name] = { count: 0, total: 0, max: 0 };
+    }
+    byFunc[c.function_name].count += 1;
+    byFunc[c.function_name].total += c.duration_ms;
+    byFunc[c.function_name].max = Math.max(byFunc[c.function_name].max, c.duration_ms);
+  }
+
+  const funcs = Object.entries(byFunc)
+    .filter(([name]) => !search || name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => b[1].total - a[1].total);
+  const allNames = Object.keys(byFunc);
+  const maxTotal = funcs[0]?.[1].total || 1;
+
+  const allSelected = allNames.length > 0 && allNames.every((n) => selectedFunctions.has(n));
+
+  const toggleAll = () => {
+    if (allSelected) {
+      onSelectionChange(new Set());
+    } else {
+      onSelectionChange(new Set(allNames));
+    }
+  };
+
+  const toggle = (name) => {
+    const next = new Set(selectedFunctions);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    onSelectionChange(next);
+  };
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <div className="card-title" style={{ margin: "0 0 4px" }}>
+            Function Summary ({allNames.length} unique functions)
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+            Select one or more functions, then click "Analyze Selected" to get AI insights.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="Search functions…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              padding: "5px 10px", borderRadius: 6, border: "1px solid var(--border)",
+              background: "var(--bg-input, var(--bg-card))", color: "inherit", fontSize: 13, width: 180,
+            }}
+          />
+          <button className="btn btn-sm btn-secondary" onClick={toggleAll}>
+            {allSelected ? "Clear All" : "Select All"}
+          </button>
+          {selectedFunctions.size > 0 && (
+            <span style={{
+              padding: "4px 10px", borderRadius: 6,
+              background: "rgba(99,102,241,.15)", color: "var(--color-primary,#6366f1)",
+              fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+            }}>
+              {selectedFunctions.size} selected
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: 36 }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  title="Select / deselect all"
+                />
+              </th>
+              <th>#</th>
+              <th>Function</th>
+              <th>Calls</th>
+              <th>Total time</th>
+              <th>Avg time</th>
+              <th>Max time</th>
+              <th>% of total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {funcs.map(([name, stats], i) => {
+              const avg = Math.round(stats.total / stats.count);
+              const selected = selectedFunctions.has(name);
+              return (
+                <tr
+                  key={name}
+                  onClick={() => toggle(name)}
+                  style={{
+                    cursor: "pointer",
+                    background: selected ? "rgba(99,102,241,.07)" : undefined,
+                    outline: selected ? "1px solid rgba(99,102,241,.25)" : undefined,
+                  }}
+                >
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={selected} onChange={() => toggle(name)} />
+                  </td>
+                  <td style={{ color: "var(--text-muted)", fontSize: 12 }}>{i + 1}</td>
+                  <td><code style={{ fontSize: 13 }}>{name}</code></td>
+                  <td style={{ color: "var(--text-muted)", fontSize: 13 }}>{stats.count}</td>
+                  <td style={{ fontWeight: 600 }}>{formatMs(stats.total)}</td>
+                  <td style={{ color: "var(--text-muted)", fontSize: 13 }}>{formatMs(avg)}</td>
+                  <td style={{ color: "var(--text-muted)", fontSize: 13 }}>{formatMs(stats.max)}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 40 }}>
+                        {pct(stats.total, totalMs)}
+                      </span>
+                      <FlameBar value={stats.total} max={maxTotal} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {funcs.length === 0 && (
+        <p style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 8 }}>
+          No functions match the search.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
 // ── AI Analysis panel ─────────────────────────────────────────────────────────
 
-function AIAnalysisPanel({ sessionId, sessionStatus }) {
+function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSelection }) {
   const [analysis, setAnalysis]     = useState(null);
   const [loading, setLoading]       = useState(false);
   const [analysing, setAnalysing]   = useState(false);
@@ -262,17 +407,14 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
   const [feedbackSent, setFeedbackSent] = useState({});
   const pollRef = useRef(null);
 
-  // Load existing analysis on mount
+  // Reset panel whenever the target function selection changes
   useEffect(() => {
-    setLoading(true);
-    getAppSessionAnalysis(sessionId)
-      .then(setAnalysis)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    setAnalysis(null);
+    setError(null);
     return () => clearInterval(pollRef.current);
-  }, [sessionId]);
+  }, [JSON.stringify(targetFunctions)]);
 
-  const startPolling = (startedId) => {
+  const startPolling = () => {
     setPolling(true);
     pollRef.current = setInterval(async () => {
       try {
@@ -287,15 +429,15 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
     }, 2000);
   };
 
-  const handleAnalyse = async (force = false) => {
+  const handleAnalyse = async () => {
     setAnalysing(true); setError(null);
     try {
-      const result = await analyseAppSession(sessionId, force);
+      const result = await analyseAppSession(sessionId, false, targetFunctions);
       if (result.status === "completed") {
         setAnalysis(result);
         setAnalysing(false);
       } else {
-        startPolling(result.id);
+        startPolling();
       }
     } catch (e) {
       setError(e.message);
@@ -315,14 +457,42 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
   const busy = analysing || polling;
 
   return (
-    <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div className="card-title" style={{ margin: 0 }}>AI Performance Analysis</div>
-        <div style={{ display: "flex", gap: 8 }}>
+    <div className="card" style={{ border: "1px solid rgba(99,102,241,.3)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="card-title" style={{ margin: "0 0 4px" }}>AI Performance Analysis</div>
+          {targetFunctions && targetFunctions.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: "var(--text-muted)", marginRight: 4 }}>Analyzing:</span>
+              {targetFunctions.slice(0, 5).map((fn) => (
+                <span key={fn} style={{
+                  fontSize: 11, padding: "2px 8px", borderRadius: 4,
+                  background: "rgba(99,102,241,.12)", color: "var(--color-primary,#6366f1)",
+                  fontFamily: "monospace", border: "1px solid rgba(99,102,241,.25)",
+                }}>
+                  {fn}
+                </span>
+              ))}
+              {targetFunctions.length > 5 && (
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  +{targetFunctions.length - 5} more
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={onClearSelection}
+            title="Go back to function selection"
+          >
+            ← Change Selection
+          </button>
           {analysis && (
             <button
               className="btn btn-sm btn-secondary"
-              onClick={() => handleAnalyse(true)}
+              onClick={handleAnalyse}
               disabled={busy || sessionStatus !== "completed"}
             >
               Re-analyse
@@ -330,53 +500,42 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
           )}
           <button
             className="btn btn-sm btn-primary"
-            onClick={() => handleAnalyse(false)}
-            disabled={busy || loading || sessionStatus !== "completed"}
+            onClick={handleAnalyse}
+            disabled={busy || sessionStatus !== "completed"}
           >
-            {polling ? "Analysing… (polling)" : analysing ? "Running…" : analysis ? "Analysis loaded" : "Run AI Analysis"}
+            {polling ? "Analysing…" : analysing ? "Running…" : analysis ? "Analyse Again" : "Analyze Selected"}
           </button>
         </div>
       </div>
 
       {error && <div className="error-msg" style={{ marginTop: 12 }}>{error}</div>}
 
-      {loading && (
-        <div style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 12 }}>
-          Loading previous analysis…
-        </div>
+      {!analysis && !busy && (
+        <p style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 12 }}>
+          Click "Analyze Selected" to get root-cause insights and fix suggestions from Claude
+          for the {targetFunctions?.length ?? 0} selected function(s).
+        </p>
       )}
 
-      {!analysis && !loading && !busy && (
-        <p style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 12 }}>
-          Click "Run AI Analysis" to get root-cause insights and fix suggestions from Claude.
-          Requires <code>ANTHROPIC_API_KEY</code> to be configured.
-        </p>
+      {busy && (
+        <div style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 12 }}>
+          Running AI analysis… this may take 15–30 seconds.
+        </div>
       )}
 
       {analysis && (
         <div style={{ marginTop: 16 }}>
           <StatusBadge status={analysis.status} />
 
-          {/* ── Root cause card ── */}
+          {/* Root cause */}
           {analysis.root_cause && (
             <div className="card" style={{ marginTop: 12, padding: "14px 16px" }}>
               <div className="card-title" style={{ margin: "0 0 8px" }}>Root cause</div>
               <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{analysis.root_cause}</p>
-
-              {/* KPI row */}
               <div className="kpi-grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(3,1fr)" }}>
-                <KPICard
-                  label="Primary bottleneck"
-                  value={analysis.primary_bottleneck || "—"}
-                />
-                <KPICard
-                  label="Estimated saving"
-                  value={formatMs(analysis.estimated_total_saving_ms)}
-                />
-                <KPICard
-                  label="Anti-patterns found"
-                  value={analysis.anti_patterns?.length ?? 0}
-                />
+                <KPICard label="Primary bottleneck" value={analysis.primary_bottleneck || "—"} />
+                <KPICard label="Estimated saving" value={formatMs(analysis.estimated_total_saving_ms)} />
+                <KPICard label="Anti-patterns found" value={analysis.anti_patterns?.length ?? 0} />
               </div>
             </div>
           )}
@@ -398,7 +557,7 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
             </div>
           )}
 
-          {/* Suggestion cards — reuse SuggestionCard unchanged */}
+          {/* Suggestion cards */}
           {analysis.suggestions?.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>
@@ -423,6 +582,13 @@ function AIAnalysisPanel({ sessionId, sessionStatus }) {
               ))}
             </div>
           )}
+
+          {/* Analyze another */}
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+            <button className="btn btn-secondary" onClick={onClearSelection}>
+              ← Analyze Different Functions
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -570,9 +736,10 @@ function CallsTable({ calls, totalMs, sourceRepo }) {
 
 export default function AppLogSession() {
   const { id } = useParams();
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+  const [session, setSession]             = useState(null);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState(null);
+  const [selectedFunctions, setSelectedFunctions] = useState(new Set());
 
   useEffect(() => {
     getAppSession(id)
@@ -586,6 +753,8 @@ export default function AppLogSession() {
   if (!session) return null;
 
   const calls = session.function_calls || [];
+  const totalMs = session.total_duration_ms || 1;
+  const hasSelection = selectedFunctions.size > 0;
 
   return (
     <div>
@@ -607,7 +776,7 @@ export default function AppLogSession() {
         <p style={{ margin: 0, fontSize: 14, color: "var(--text-muted)" }}>
           Format: <strong>{session.log_format}</strong>
           {" · "}{session.total_calls ?? 0} calls
-          {" · "}{formatMs(session.total_duration_ms)} total
+          {" · "}{formatMs(totalMs)} total
           {" · "}
           <span style={{
             textTransform: "capitalize",
@@ -632,28 +801,57 @@ export default function AppLogSession() {
         <div className="error-msg">{session.error_message}</div>
       )}
 
-      {/* Flamegraph with source badges */}
+      {/* Time breakdown flamegraph */}
       {calls.length > 0 && (
-        <TimeBreakdown
+        <TimeBreakdown calls={calls} totalMs={totalMs} sourceRepo={session.source_repo} />
+      )}
+
+      {/* Function selector — always visible when calls exist */}
+      {calls.length > 0 && session.status === "completed" && (
+        <FunctionSelectorTable
           calls={calls}
-          totalMs={session.total_duration_ms || 1}
-          sourceRepo={session.source_repo}
+          totalMs={totalMs}
+          selectedFunctions={selectedFunctions}
+          onSelectionChange={setSelectedFunctions}
         />
       )}
 
-      {/* AI Analysis — button + KPI card + SuggestionCards */}
-      <AIAnalysisPanel sessionId={id} sessionStatus={session.status} />
+      {/* "Analyze Selected" call-to-action — shown when functions are selected but analysis not started */}
+      {hasSelection && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "12px 16px", borderRadius: 8, marginBottom: 16,
+          background: "rgba(99,102,241,.08)", border: "1px solid rgba(99,102,241,.25)",
+        }}>
+          <span style={{ fontSize: 14, color: "var(--color-primary,#6366f1)", fontWeight: 600 }}>
+            {selectedFunctions.size} function{selectedFunctions.size > 1 ? "s" : ""} selected — ready for AI analysis
+          </span>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setSelectedFunctions(new Set())}
+            style={{ fontSize: 12 }}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {/* AI Analysis panel — shown only when functions are selected */}
+      {hasSelection && (
+        <AIAnalysisPanel
+          sessionId={id}
+          sessionStatus={session.status}
+          targetFunctions={Array.from(selectedFunctions)}
+          onClearSelection={() => setSelectedFunctions(new Set())}
+        />
+      )}
 
       {/* Source correlation */}
       <SourceTrace sessionId={id} sourceRepo={session.source_repo} />
 
-      {/* All calls table */}
+      {/* All individual calls table */}
       {calls.length > 0 && (
-        <CallsTable
-          calls={calls}
-          totalMs={session.total_duration_ms || 1}
-          sourceRepo={session.source_repo}
-        />
+        <CallsTable calls={calls} totalMs={totalMs} sourceRepo={session.source_repo} />
       )}
 
       {calls.length === 0 && session.status === "completed" && (
