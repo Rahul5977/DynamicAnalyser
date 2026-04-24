@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { LayoutDashboard, Play, Settings, Upload } from "lucide-react";
-import { getActiveRegressions } from "../services/api";
+import { getActiveRegressions, getDashboardSummary, listAppSessions, listRepos } from "../services/api";
 
 const NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -16,9 +16,32 @@ const APP_LOG_NAV = [
 export default function Layout({ children }) {
   const location = useLocation();
   const [alertCount, setAlertCount] = useState(0);
+  const [quickRepos, setQuickRepos] = useState([]);
+  const [quickApps, setQuickApps] = useState([]);
+  const [recentRuns, setRecentRuns] = useState([]);
 
   useEffect(() => {
     getActiveRegressions().then((d) => setAlertCount((d || []).length)).catch(() => {});
+    listRepos()
+      .then((repos) => setQuickRepos((repos || []).slice(0, 4)))
+      .catch(() => {});
+    listAppSessions()
+      .then((sessions) => {
+        const seen = new Set();
+        const appNames = [];
+        for (const s of sessions || []) {
+          if (!seen.has(s.app_name)) {
+            seen.add(s.app_name);
+            appNames.push(s.app_name);
+          }
+          if (appNames.length >= 4) break;
+        }
+        setQuickApps(appNames);
+      })
+      .catch(() => {});
+    getDashboardSummary()
+      .then((summary) => setRecentRuns((summary?.recent_runs || []).slice(0, 4)))
+      .catch(() => {});
   }, []);
 
   return (
@@ -104,6 +127,49 @@ export default function Layout({ children }) {
             </li>
           ))}
         </ul>
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">Quick Access</div>
+          <ul className="sidebar-mini-nav">
+            {quickRepos.length > 0 &&
+              quickRepos.map((repo) => (
+                <li key={repo.id}>
+                  <Link to={`/repos/${repo.owner}/${repo.name}`} title={repo.full_name}>
+                    {repo.name}
+                  </Link>
+                </li>
+              ))}
+            {quickApps.length > 0 &&
+              quickApps.map((appName) => (
+                <li key={appName}>
+                  <Link to={`/app-logs/apps/${encodeURIComponent(appName)}`} title={appName}>
+                    {appName}
+                  </Link>
+                </li>
+              ))}
+            {quickRepos.length === 0 && quickApps.length === 0 && (
+              <li>
+                <span className="sidebar-mini-empty">No projects yet</span>
+              </li>
+            )}
+          </ul>
+        </div>
+
+        <div className="sidebar-section" style={{ marginTop: 10 }}>
+          <div className="sidebar-section-title">Recent Runs</div>
+          <ul className="sidebar-mini-nav">
+            {recentRuns.length > 0 ? (
+              recentRuns.map((run) => (
+                <li key={run.id}>
+                  <Link to={`/runs/${run.id}`}>Run #{run.run_number}</Link>
+                </li>
+              ))
+            ) : (
+              <li>
+                <span className="sidebar-mini-empty">No runs yet</span>
+              </li>
+            )}
+          </ul>
+        </div>
         <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border)" }}>
           <div
             style={{

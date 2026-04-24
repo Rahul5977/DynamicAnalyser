@@ -25,6 +25,23 @@ function formatMs(ms) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
+function formatRunDuration(ms) {
+  if (ms === null || ms === undefined) return "—";
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function getWorkflowLabel(run) {
+  const name = run.workflow_name?.trim() || "Workflow";
+  const branch = run.head_branch ? `(${run.head_branch})` : "";
+  return `${name} ${branch}`.trim();
+}
+
 function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
@@ -122,9 +139,14 @@ function CICDDashboard() {
                 {summary.recent_runs.map((r) => (
                   <tr key={r.id}>
                     <td><Link to={`/runs/${r.id}`}>#{r.run_number}</Link></td>
-                    <td>{r.workflow_name || "—"}</td>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{getWorkflowLabel(r)}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                        Run ID #{r.github_run_id}
+                      </div>
+                    </td>
                     <td><StatusBadge status={r.conclusion || r.status} /></td>
-                    <td>{formatMs(r.total_duration_ms)}</td>
+                    <td>{formatRunDuration(r.total_duration_ms)}</td>
                     <td style={{ color: "var(--text-muted)" }}>{formatDate(r.created_at)}</td>
                   </tr>
                 ))}
@@ -392,7 +414,7 @@ function RegressionAlertsSummary() {
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const [mode, setMode] = useState(
-    searchParams.get("mode") === "applogs" ? "applogs" : "cicd"
+    searchParams.get("mode") === "cicd" ? "cicd" : "applogs"
   ); // "cicd" | "applogs"
   const [heroStats, setHeroStats] = useState({
     functionCalls: 0,
@@ -463,37 +485,37 @@ export default function Dashboard() {
           </div>
           <div className="hero-stat-card">
             <div className="hero-stat-label">Apps Tracked</div>
-            <div className="hero-stat-value" style={{ color: "var(--green)" }}>{heroStats.appsTracked}</div>
+            <div className="hero-stat-value">{heroStats.appsTracked}</div>
           </div>
           <div className="hero-stat-card">
             <div className="hero-stat-label">AI Analyses Run</div>
-            <div className="hero-stat-value" style={{ color: "var(--amber)" }}>{heroStats.analysesRun}</div>
+            <div className="hero-stat-value">{heroStats.analysesRun}</div>
           </div>
           <div className="hero-stat-card">
             <div className="hero-stat-label">Time Saved</div>
-            <div className="hero-stat-value" style={{ color: "#fb7185" }}>{heroStats.timeSaved}</div>
+            <div className="hero-stat-value semantic-positive">{heroStats.timeSaved}</div>
           </div>
         </div>
 
         <div className="hero-panel card">
           <div className="hero-panel-title">Platform Capabilities</div>
           <div className="hero-feature-grid">
-            <div className="hero-feature-item">
+            <Link className="hero-feature-item clickable" to="/?mode=applogs">
               <Flame size={15} />
               <div className="hero-feature-copy"><strong>Flamegraph</strong><span>Visual call breakdown</span></div>
-            </div>
-            <div className="hero-feature-item">
+            </Link>
+            <Link className="hero-feature-item clickable" to="/analyze">
               <Bot size={15} />
               <div className="hero-feature-copy"><strong>AI Root Cause</strong><span>Finds why it is slow</span></div>
-            </div>
-            <div className="hero-feature-item">
+            </Link>
+            <Link className="hero-feature-item clickable" to="/?mode=applogs">
               <MessageCircle size={15} />
               <div className="hero-feature-copy"><strong>Chat AI</strong><span>Ask in plain English</span></div>
-            </div>
-            <div className="hero-feature-item">
+            </Link>
+            <Link className="hero-feature-item clickable" to="/settings">
               <Brain size={15} />
               <div className="hero-feature-copy"><strong>Self-Learning</strong><span>Improves with feedback</span></div>
-            </div>
+            </Link>
           </div>
         </div>
 
@@ -551,18 +573,18 @@ export default function Dashboard() {
         {/* Mode toggle */}
         <div style={{ display: "flex", gap: 4, background: "var(--bg-card)", borderRadius: 8, padding: 4, border: "1px solid var(--border)" }}>
           <button
-            className={`btn btn-sm ${mode === "cicd" ? "btn-primary" : "btn-secondary"}`}
-            style={{ borderRadius: 6 }}
-            onClick={() => setMode("cicd")}
-          >
-            CI/CD Pipeline
-          </button>
-          <button
             className={`btn btn-sm ${mode === "applogs" ? "btn-primary" : "btn-secondary"}`}
             style={{ borderRadius: 6 }}
             onClick={() => setMode("applogs")}
           >
             Application Logs
+          </button>
+          <button
+            className={`btn btn-sm ${mode === "cicd" ? "btn-primary" : "btn-secondary"}`}
+            style={{ borderRadius: 6 }}
+            onClick={() => setMode("cicd")}
+          >
+            CI/CD Pipeline
           </button>
         </div>
       </div>

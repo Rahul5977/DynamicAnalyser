@@ -43,6 +43,35 @@ a:hover { color: var(--accent-hover); }
 .sidebar-nav li a:hover,
 .sidebar-nav li a.active { color: var(--text); background: var(--bg-hover); }
 .sidebar-nav li a svg { width: 18px; height: 18px; }
+.sidebar-section { padding: 8px 10px 0; }
+.sidebar-section-title {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+}
+.sidebar-mini-nav { list-style: none; }
+.sidebar-mini-nav li a {
+  display: block;
+  margin: 0 4px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: #a3afc2;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid transparent;
+}
+.sidebar-mini-nav li a:hover {
+  background: rgba(99,102,241,.09);
+  color: #dbe4ff;
+  border-color: rgba(99,102,241,.2);
+}
+.sidebar-mini-empty { display: block; color: var(--text-muted); font-size: 12px; padding: 6px 10px; }
 
 .main-content { margin-left: 240px; flex: 1; padding: 24px 32px; min-width: 0; }
 .page-header { margin-bottom: 24px; }
@@ -315,6 +344,7 @@ tr:hover td { background: rgba(99,102,241,.04); }
 }
 .hero-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
 .hero-stat-value { font-size: 39px; font-weight: 750; line-height: 1.06; margin-top: 8px; color: #a5b4fc; }
+.hero-stat-value.semantic-positive { color: #22c55e; }
 .hero-panel-title {
   font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
   color: var(--text-muted); font-weight: 700; margin-bottom: 10px;
@@ -323,6 +353,15 @@ tr:hover td { background: rgba(99,102,241,.04); }
 .hero-feature-item {
   display: flex; align-items: flex-start; gap: 9px; padding: 14px 12px;
   background: #090d16; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; font-weight: 600;
+}
+.hero-feature-item.clickable {
+  cursor: pointer;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+.hero-feature-item.clickable:hover {
+  border-color: rgba(129,140,248,.45);
+  background: rgba(99,102,241,.08);
+  transform: translateY(-1px);
 }
 .hero-feature-copy { display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
 .hero-feature-copy strong { font-size: 15px; font-weight: 700; color: #f3f4f6; }
