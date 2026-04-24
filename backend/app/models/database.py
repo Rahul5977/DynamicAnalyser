@@ -302,6 +302,9 @@ class AppLogSession(Base):
     function_calls = relationship(
         "AppFunctionCall", back_populates="session", cascade="all, delete-orphan"
     )
+    messages = relationship(
+        "ChatMessage", back_populates="session", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_app_session_status", "status"),
@@ -341,6 +344,22 @@ class AppFunctionCall(Base):
 
     def __repr__(self) -> str:
         return f"<AppFunctionCall {self.function_name} #{self.call_number} {self.duration_ms}ms>"
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("app_log_sessions.id"), nullable=False)
+    role = Column(String(16), nullable=False)  # user or assistant
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    session = relationship("AppLogSession", back_populates="messages")
+
+    __table_args__ = (
+        Index("ix_chat_session", "session_id"),
+    )
 
 
 class LogFormatSchema(Base):

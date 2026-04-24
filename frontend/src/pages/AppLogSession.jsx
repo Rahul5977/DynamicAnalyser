@@ -7,6 +7,8 @@ import {
   getAppTrace,
   indexSourceForSession,
   submitFeedback,
+  sendChatMessage,
+  getChatHistory,
 } from "../services/api";
 import SuggestionCard from "../components/SuggestionCard";
 import KPICard from "../components/KPICard";
@@ -595,6 +597,211 @@ function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSel
   );
 }
 
+function ChatPanel({ sessionId }) {
+  const [msgs, setMsgs] = useState([]);
+  const [inputText, setInputText] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState("");
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getChatHistory(sessionId)
+      .then((history) => {
+        if (mounted) {
+          setMsgs(history.map((m) => ({ role: m.role, content: m.content })));
+        }
+      })
+      .catch((e) => {
+        if (mounted) setError(e.message);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [msgs, isSending]);
+
+  const doSend = async (text) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed || isSending) return;
+    const history = msgs.slice(-10);
+
+    setError("");
+    setMsgs((prev) => [...prev, { role: "user", content: trimmed }]);
+    setInputText("");
+    setIsSending(true);
+
+    try {
+      const res = await sendChatMessage(sessionId, trimmed, history);
+      setMsgs((prev) => [...prev, { role: "assistant", content: res.reply }]);
+    } catch (e) {
+      setError(e.message || "Failed to send message");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const suggestions = [
+    "Why is the primary bottleneck slow?",
+    "Show me the fix for the top suggestion",
+    "Which functions can be parallelised?",
+  ];
+
+  return (
+    <div
+      style={{
+        background: "var(--color-background-primary)",
+        border: "0.5px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        padding: "1rem 1.25rem",
+        marginTop: "1rem",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 18 }}>🤖</span>
+        <div style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
+          Ask AI about this session
+        </div>
+      </div>
+
+      <div
+        ref={listRef}
+        style={{
+          maxHeight: 400,
+          overflowY: "auto",
+          padding: "8px 4px",
+          marginBottom: 12,
+          border: "0.5px solid var(--color-border-tertiary)",
+          borderRadius: "var(--border-radius-md)",
+          background: "var(--color-background-primary)",
+        }}
+      >
+        {msgs.length === 0 && !isSending ? (
+          <div style={{ color: "var(--color-text-secondary)", fontSize: 13, padding: "4px 8px" }}>
+            No messages yet. Ask about bottlenecks, timings, or fixes.
+          </div>
+        ) : (
+          msgs.map((m, i) => (
+            <div
+              key={`${m.role}-${i}`}
+              style={{
+                display: "flex",
+                justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
+              <div
+                style={{
+                  maxWidth: "78%",
+                  background:
+                    m.role === "user"
+                      ? "var(--color-background-info)"
+                      : "var(--color-background-secondary)",
+                  color: "var(--color-text-primary)",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  marginBottom: 8,
+                  whiteSpace: "pre-wrap",
+                  lineHeight: 1.5,
+                  fontSize: 14,
+                }}
+              >
+                {m.content}
+              </div>
+            </div>
+          ))
+        )}
+        {isSending && (
+          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div
+              style={{
+                maxWidth: "78%",
+                background: "var(--color-background-secondary)",
+                color: "var(--color-text-primary)",
+                borderRadius: 10,
+                padding: "8px 12px",
+                marginBottom: 8,
+                fontSize: 14,
+              }}
+            >
+              Thinking...
+            </div>
+          </div>
+        )}
+      </div>
+
+      {msgs.length === 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => doSend(s)}
+              disabled={isSending}
+              style={{
+                border: "0.5px solid var(--color-border-tertiary)",
+                borderRadius: 999,
+                background: "var(--color-background-secondary)",
+                color: "var(--color-text-primary)",
+                padding: "6px 10px",
+                fontSize: 12,
+                cursor: isSending ? "not-allowed" : "pointer",
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="text"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          placeholder="Ask about any function, bottleneck, or fix..."
+          disabled={isSending}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") doSend(inputText);
+          }}
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            borderRadius: "var(--border-radius-md)",
+            border: "0.5px solid var(--color-border-tertiary)",
+            background: "var(--color-background-primary)",
+            color: "var(--color-text-primary)",
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => doSend(inputText)}
+          disabled={isSending || !inputText.trim()}
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--border-radius-md)",
+            border: "0.5px solid var(--color-border-tertiary)",
+            background: "var(--color-background-secondary)",
+            color: "var(--color-text-primary)",
+            cursor: isSending ? "not-allowed" : "pointer",
+          }}
+        >
+          Send
+        </button>
+      </div>
+      {error && (
+        <div style={{ color: "var(--color-danger, #ef4444)", fontSize: 13, marginTop: 8 }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Function-calls table ──────────────────────────────────────────────────────
 
 function CallsTable({ calls, totalMs, sourceRepo }) {
@@ -861,6 +1068,8 @@ export default function AppLogSession() {
           </p>
         </div>
       )}
+
+      <ChatPanel sessionId={id} />
     </div>
   );
 }

@@ -102,3 +102,12 @@ export const analyseAppSession = (id, force = false, targetFunctions = null) =>
 
 export const getAppSessionAnalysis = (id) =>
   request(`/app-logs/sessions/${id}/analysis`);
+
+export const sendChatMessage = (sessionId, message, history) =>
+  request(`/app-logs/sessions/${sessionId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+
+export const getChatHistory = (sessionId) =>
+  request(`/app-logs/sessions/${sessionId}/chat/history`);
