@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   getActiveRegressions,
   getDashboardSummary,
@@ -282,7 +282,7 @@ function FleetSummaryWidget() {
     };
   }, []);
 
-  if (!summary) return null;
+  if (!summary || summary.total_app_sessions === 0) return null;
 
   return (
     <div
@@ -380,12 +380,15 @@ function RegressionAlertsSummary() {
 // ── Root Dashboard with mode toggle ──────────────────────────────────────────
 
 export default function Dashboard() {
-  const initialMode = (() => {
-    const params = new URLSearchParams(window.location.search);
-    const m = params.get("mode");
-    return m === "applogs" ? "applogs" : "cicd";
-  })();
-  const [mode, setMode] = useState(initialMode); // "cicd" | "applogs"
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState(
+    searchParams.get("mode") === "applogs" ? "applogs" : "cicd"
+  ); // "cicd" | "applogs"
+
+  useEffect(() => {
+    const m = searchParams.get("mode");
+    if (m === "applogs" || m === "cicd") setMode(m);
+  }, [searchParams]);
 
   return (
     <div>

@@ -5,6 +5,7 @@ from app.models.database import AppFunctionCall, AppLogSession, RegressionAlert
 REGRESSION_WARNING = 1.5
 REGRESSION_CRITICAL = 2.5
 MIN_BASELINE_SESSIONS = 3
+MIN_DURATION_MS = 50
 
 
 class RegressionDetector:
@@ -37,14 +38,15 @@ class RegressionDetector:
 
         calls = (
             self.db.query(AppFunctionCall)
-            .filter(AppFunctionCall.session_id == session_id)
+            .filter(
+                AppFunctionCall.session_id == session_id,
+                AppFunctionCall.duration_ms >= MIN_DURATION_MS,
+            )
             .all()
         )
 
         alerts: list[RegressionAlert] = []
         for call in calls:
-            if call.duration_ms < 50:
-                continue
             baseline = self.compute_baseline(session.app_name, call.function_name, session_id)
             if baseline is None or baseline <= 0:
                 continue
@@ -89,6 +91,7 @@ class RegressionDetector:
                 "current_ms": r.current_ms,
                 "ratio": r.ratio,
                 "severity": r.severity,
+                "resolved": r.resolved,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in rows

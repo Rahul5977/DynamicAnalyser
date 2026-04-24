@@ -8,8 +8,10 @@ import {
   indexSourceForSession,
   getAppBenchmark,
   getDebtTrend,
+  getPatternConfidence,
   getSessionRegressions,
   resolveRegressionAlert,
+  submitAppFeedback,
   sendChatMessage,
   getChatHistory,
 } from "../services/api";
@@ -510,7 +512,10 @@ function DebtScoreCard({ sessionId }) {
           color: "var(--color-text-secondary)",
         }}
       >
-        No technical debt trend available yet.
+        Technical debt score not yet calculated.{" "}
+        <span style={{ color: "var(--color-text-info)" }}>
+          Run AI analysis on this session to generate a score.
+        </span>
       </div>
     );
   }
@@ -954,28 +959,18 @@ function AIAnalysisPanel({
 
   const handleFeedback = async (analysisId, suggestionId, verdict) => {
     try {
-      const res = await fetch(`/api/app-logs/sessions/${sessionId}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestion_id: suggestionId, verdict, comment: null }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.detail || err.error || "Failed to submit feedback");
-      }
+      await submitAppFeedback(sessionId, suggestionId, verdict);
       setFeedbackSent((prev) => ({ ...prev, [suggestionId]: verdict }));
       await loadPatternConfidence();
     } catch (e) {
-      console.error("Feedback failed:", e.message);
+      setError(e.message || "Feedback failed");
     }
   };
 
   const loadPatternConfidence = async () => {
     if (!appName) return;
     try {
-      const res = await fetch(`/api/app-logs/apps/${encodeURIComponent(appName)}/pattern-confidence`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await getPatternConfidence(appName);
       const rows = (data.patterns || []).filter(
         (r) => (r.accepted_count + r.rejected_count + r.partial_count) > 0
       );
@@ -1203,6 +1198,7 @@ function ChatPanel({ sessionId }) {
   const [inputText, setInputText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -1215,6 +1211,9 @@ function ChatPanel({ sessionId }) {
       })
       .catch((e) => {
         if (mounted) setError(e.message);
+      })
+      .finally(() => {
+        if (mounted) setHistoryLoaded(true);
       });
     return () => {
       mounted = false;
@@ -1341,7 +1340,7 @@ function ChatPanel({ sessionId }) {
         )}
       </div>
 
-      {msgs.length === 0 && (
+      {historyLoaded && msgs.length === 0 && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {suggestions.map((s) => (
             <button

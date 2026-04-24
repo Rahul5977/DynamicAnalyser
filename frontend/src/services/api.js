@@ -119,6 +119,15 @@ export const getActiveRegressions = (appName = null) =>
       : "/app-logs/regressions/active"
   );
 
+export const submitAppFeedback = (sessionId, suggestionId, verdict) =>
+  request(`/app-logs/sessions/${sessionId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ suggestion_id: suggestionId, verdict, comment: null }),
+  });
+
+export const getPatternConfidence = (appName) =>
+  request(`/app-logs/apps/${encodeURIComponent(appName)}/pattern-confidence`);
+
 export const sendChatMessage = (sessionId, message, history) =>
   request(`/app-logs/sessions/${sessionId}/chat`, {
     method: "POST",
