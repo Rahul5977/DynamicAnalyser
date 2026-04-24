@@ -30,6 +30,72 @@ function barColor(v, max) {
   return r > 0.7 ? "#ef4444" : r > 0.35 ? "#f59e0b" : "#22c55e";
 }
 
+function renderMarkdownMessage(content) {
+  if (!content) return null;
+  const lines = content.split("\n");
+  const blocks = [];
+  let inCode = false;
+  let codeLang = "";
+  let codeLines = [];
+  let textLines = [];
+
+  const flushText = () => {
+    if (textLines.length === 0) return;
+    blocks.push({ type: "text", lines: [...textLines] });
+    textLines = [];
+  };
+  const flushCode = () => {
+    blocks.push({ type: "code", lang: codeLang, code: codeLines.join("\n") });
+    codeLines = [];
+    codeLang = "";
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      if (inCode) {
+        flushCode();
+        inCode = false;
+      } else {
+        flushText();
+        inCode = true;
+        codeLang = line.replace("```", "").trim();
+      }
+      continue;
+    }
+    if (inCode) codeLines.push(line);
+    else textLines.push(line);
+  }
+  if (inCode) flushCode();
+  flushText();
+
+  return blocks.map((b, idx) => {
+    if (b.type === "code") {
+      return (
+        <pre
+          key={`code-${idx}`}
+          style={{
+            margin: "8px 0",
+            padding: "8px 10px",
+            borderRadius: 6,
+            overflowX: "auto",
+            background: "var(--color-background-primary)",
+            border: "0.5px solid var(--color-border-tertiary)",
+            fontSize: 12,
+            fontFamily: "monospace",
+          }}
+        >
+          <code>{b.code}</code>
+        </pre>
+      );
+    }
+    return (
+      <div key={`text-${idx}`} style={{ whiteSpace: "pre-wrap" }}>
+        {b.lines.join("\n")}
+      </div>
+    );
+  });
+}
+
 function LocalSuggestionCard({ suggestion, onFeedback }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1219,12 +1285,11 @@ function ChatPanel({ sessionId }) {
                   borderRadius: 10,
                   padding: "8px 12px",
                   marginBottom: 8,
-                  whiteSpace: "pre-wrap",
                   lineHeight: 1.5,
                   fontSize: 14,
                 }}
               >
-                {m.content}
+                {renderMarkdownMessage(m.content)}
               </div>
             </div>
           ))

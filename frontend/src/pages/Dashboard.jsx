@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDashboardSummary, listRepos, listAppSessions } from "../services/api";
+import { getDashboardSummary, getFleetSummary, listRepos, listAppSessions } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
 
@@ -166,6 +166,7 @@ function AppLogsDashboard() {
 
   return (
     <>
+      <FleetSummaryWidget />
       <RegressionAlertsSummary />
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
@@ -257,6 +258,43 @@ function AppLogsDashboard() {
         )}
       </div>
     </>
+  );
+}
+
+function FleetSummaryWidget() {
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getFleetSummary()
+      .then((data) => {
+        if (mounted) setSummary(data);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (!summary) return null;
+
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        border: "0.5px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        padding: "10px 12px",
+        background: "var(--color-background-primary)",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Fleet Summary</div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        {summary.total_app_sessions} sessions · {summary.total_repos} repos · avg{" "}
+        {formatMs(summary.fleet_avg_duration_ms)} · common issue:{" "}
+        {summary.most_common_anti_pattern || "N/A"}
+      </div>
+    </div>
   );
 }
 
