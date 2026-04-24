@@ -472,9 +472,9 @@ export default function Dashboard() {
             <Link to="/app-logs/upload" className="btn btn-gradient hero-cta-primary">
               <ArrowUp size={15} /> Upload App Log
             </Link>
-            <button className="btn btn-secondary hero-cta-secondary" onClick={() => setMode("cicd")}>
+            <Link to="/analyze" className="btn btn-secondary hero-cta-secondary">
               <GitBranch size={15} /> Analyze GitHub Repo
-            </button>
+            </Link>
           </div>
         </div>
 

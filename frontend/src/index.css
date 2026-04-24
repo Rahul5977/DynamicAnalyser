@@ -312,13 +312,13 @@ tr:hover td { background: rgba(99,102,241,.04); }
 /* Dashboard homepage */
 .dashboard-home { margin-bottom: 28px; }
 .dashboard-hero {
-  background: radial-gradient(120% 120% at 0% 0%, rgba(99,102,241,.2), rgba(15,17,23,.95));
-  border-color: rgba(139,92,246,.2);
+  background: radial-gradient(120% 120% at 0% 0%, rgba(99,102,241,.12), rgba(15,17,23,.98));
+  border-color: rgba(139,92,246,.16);
   border-radius: 14px;
   padding: 28px 30px 24px;
 }
-.dashboard-hero h1 { font-size: 58px; line-height: .97; letter-spacing: -.02em; margin: 12px 0 12px; }
-.dashboard-hero p { max-width: 840px; color: #9aa3b7; font-size: 18px; line-height: 1.45; margin-bottom: 20px; }
+.dashboard-hero h1 { font-size: 54px; line-height: .98; letter-spacing: -.018em; margin: 10px 0 10px; }
+.dashboard-hero p { max-width: 780px; color: #9aa3b7; font-size: 17px; line-height: 1.45; margin-bottom: 18px; }
 .hero-chip {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 13px; font-weight: 700; color: #a5b4fc; letter-spacing: .03em;
@@ -329,11 +329,11 @@ tr:hover td { background: rgba(99,102,241,.04); }
 .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .hero-cta-primary,
 .hero-cta-secondary {
-  height: 48px;
-  padding: 0 22px;
-  border-radius: 12px;
-  font-size: 17px;
-  font-weight: 650;
+  height: 46px;
+  padding: 0 20px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
 }
 .hero-cta-secondary { background: rgba(255,255,255,.02); border-color: rgba(255,255,255,.18); }
 .hero-cta-secondary:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.28); }
@@ -373,7 +373,7 @@ tr:hover td { background: rgba(99,102,241,.04); }
   font-size: 11px; letter-spacing: .08em; color: #a5b4fc; font-weight: 700;
 }
 .hero-step em { font-style: normal; font-size: 11px; color: #4f46e5; letter-spacing: .09em; font-weight: 700; margin-top: 2px; }
-.hero-step span { font-size: 31px; letter-spacing: -.02em; line-height: 1; color: var(--text); font-weight: 700; margin-top: 2px; }
+.hero-step span { font-size: 21px; letter-spacing: -.01em; line-height: 1.1; color: #e5e7eb; font-weight: 700; margin-top: 2px; }
 .hero-step small { font-size: 12px; color: var(--text-muted); letter-spacing: 0; margin-top: 3px; }
 .hero-status-pill {
   display: inline-flex; align-items: center; gap: 8px; margin-top: 10px;
@@ -390,6 +390,6 @@ tr:hover td { background: rgba(99,102,241,.04); }
   .hero-cta-primary,
   .hero-cta-secondary { height: 44px; font-size: 15px; padding: 0 16px; }
   .hero-stat-value { font-size: 30px; }
-  .hero-step span { font-size: 24px; }
+  .hero-step span { font-size: 19px; }
   .hero-feature-grid, .hero-steps-grid, .hero-stat-grid { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
 }
