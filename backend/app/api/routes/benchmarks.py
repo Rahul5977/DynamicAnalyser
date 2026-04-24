@@ -52,6 +52,8 @@ def _most_common_anti_pattern(db: Session) -> str | None:
 
 @router.get("/benchmarks/app-sessions")
 def app_sessions_benchmark(app_name: str = Query(...), db: Session = Depends(get_db)):
+    requested_name = app_name.strip()
+    requested_norm = requested_name.casefold()
     grouped = (
         db.query(
             AppLogSession.app_name.label("app_name"),
@@ -81,7 +83,10 @@ def app_sessions_benchmark(app_name: str = Query(...), db: Session = Depends(get
         }
         for r in grouped
     ]
-    target = next((r for r in app_rows if r["app_name"] == app_name), None)
+    target = next(
+        (r for r in app_rows if (r["app_name"] or "").strip().casefold() == requested_norm),
+        None,
+    )
     if not target:
         raise HTTPException(status_code=404, detail=f"No benchmark data found for app '{app_name}'")
 
@@ -96,7 +101,7 @@ def app_sessions_benchmark(app_name: str = Query(...), db: Session = Depends(get
         speed_percentile = int(round((less_or_equal / total_apps) * 100))
 
     return {
-        "app_name": app_name,
+        "app_name": target["app_name"],
         "avg_duration_ms": target["avg_ms"],
         "session_count": target["session_count"],
         "total_apps_in_fleet": total_apps,

@@ -106,6 +106,12 @@ export const getAppSessionAnalysis = (id) =>
 export const getDebtTrend = (sessionId) =>
   request(`/app-logs/sessions/${sessionId}/debt-trend`);
 
+export const getSessionRegressions = (sessionId) =>
+  request(`/app-logs/sessions/${sessionId}/regressions`);
+
+export const resolveRegressionAlert = (alertId) =>
+  request(`/app-logs/regressions/${alertId}/resolve`, { method: "POST" });
+
 export const sendChatMessage = (sessionId, message, history) =>
   request(`/app-logs/sessions/${sessionId}/chat`, {
     method: "POST",

@@ -40,7 +40,10 @@ export default function AppLogsByApp() {
     let mounted = true;
     Promise.allSettled(
       sessions.map(async (s) => {
-        await getAppSessionAnalysis(s.id);
+        const analysis = await getAppSessionAnalysis(s.id);
+        if (analysis?.debt_score != null) {
+          return { sessionId: s.id, score: analysis.debt_score };
+        }
         const trend = await getDebtTrend(s.id);
         const current = (trend || []).filter((r) => r.session_id === s.id).slice(-1)[0];
         return { sessionId: s.id, score: current?.score ?? null };

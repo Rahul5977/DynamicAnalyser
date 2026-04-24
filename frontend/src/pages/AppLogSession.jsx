@@ -8,6 +8,8 @@ import {
   indexSourceForSession,
   getAppBenchmark,
   getDebtTrend,
+  getSessionRegressions,
+  resolveRegressionAlert,
   sendChatMessage,
   getChatHistory,
 } from "../services/api";
@@ -372,16 +374,16 @@ function BenchmarkCard({ appName }) {
 function RegressionPanel({ sessionId }) {
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let mounted = true;
-    fetch(`/api/app-logs/sessions/${sessionId}/regressions`)
-      .then(async (r) => {
-        if (!r.ok) return [];
-        return r.json();
-      })
+    getSessionRegressions(sessionId)
       .then((data) => {
         if (mounted) setRows((data || []).filter((x) => !x.resolved));
+      })
+      .catch((e) => {
+        if (mounted) setError(e.message || "Failed to load regressions");
       })
       .finally(() => {
         if (mounted) setLoaded(true);
@@ -392,13 +394,17 @@ function RegressionPanel({ sessionId }) {
   }, [sessionId]);
 
   const markResolved = async (alertId) => {
+    const previous = rows;
     setRows((prev) => prev.filter((r) => r.id !== alertId));
     try {
-      await fetch(`/api/app-logs/regressions/${alertId}/resolve`, { method: "POST" });
-    } catch (_) {}
+      await resolveRegressionAlert(alertId);
+    } catch (e) {
+      setRows(previous);
+      setError(e.message || "Failed to resolve regression");
+    }
   };
 
-  if (!loaded || rows.length === 0) return null;
+  if (!loaded || (rows.length === 0 && !error)) return null;
 
   return (
     <div className="card" style={{ border: "1px solid rgba(239,68,68,.35)" }}>
@@ -415,6 +421,7 @@ function RegressionPanel({ sessionId }) {
       >
         ⚠ {rows.length} performance regression(s) detected in this session
       </div>
+      {error && <div className="error-msg" style={{ marginBottom: 10 }}>{error}</div>}
       <div className="table-wrap">
         <table>
           <thead>
@@ -490,7 +497,23 @@ function DebtScoreCard({ sessionId }) {
     };
   }, [sessionId]);
 
-  if (loading || trend.length === 0) return null;
+  if (loading) return null;
+  if (trend.length === 0) {
+    return (
+      <div
+        style={{
+          background: "var(--color-background-primary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+          borderRadius: "var(--border-radius-lg)",
+          padding: "1rem 1.25rem",
+          marginBottom: "1rem",
+          color: "var(--color-text-secondary)",
+        }}
+      >
+        No technical debt trend available yet.
+      </div>
+    );
+  }
 
   const last10 = trend.slice(-10);
   const current = last10[last10.length - 1]?.score ?? 0;
@@ -961,9 +984,7 @@ function AIAnalysisPanel({
   };
 
   useEffect(() => {
-    if (analysis) {
-      loadPatternConfidence();
-    }
+    loadPatternConfidence();
   }, [analysis, appName]);
 
   const busy = analysing || polling;
@@ -1220,6 +1241,13 @@ function ChatPanel({ sessionId }) {
       const res = await sendChatMessage(sessionId, trimmed, history);
       setMsgs((prev) => [...prev, { role: "assistant", content: res.reply }]);
     } catch (e) {
+      setMsgs((prev) => {
+        const idx = prev.findIndex(
+          (m, i) => i === prev.length - 1 && m.role === "user" && m.content === trimmed
+        );
+        if (idx === -1) return prev;
+        return prev.slice(0, idx);
+      });
       setError(e.message || "Failed to send message");
     } finally {
       setIsSending(false);

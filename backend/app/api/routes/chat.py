@@ -97,7 +97,7 @@ def chat_with_session(
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=1024,
+        max_tokens=2048,
         system=(
             "You are an expert performance engineer. You have full context of this "
             "application log analysis session:\n"

@@ -202,19 +202,30 @@ class AppAIEngine:
 
             self.db.add_all(suggestions)
             self.db.commit()
-            recommender = FixRecommender(self.db)
-            recommender.enrich_analysis(analysis, session=session)
-            from app.services.debt_scorer import DebtScorer
+            try:
+                recommender = FixRecommender(self.db)
+                recommender.enrich_analysis(analysis, session=session)
+            except Exception as e:
+                logger.warning("Failed to enrich suggestions for session %d: %s", session_id, e)
 
-            scorer = DebtScorer(self.db)
-            analysis.debt_score = scorer.compute_score(analysis)
-            self.db.commit()
-            from app.services.regression_detector import RegressionDetector
+            try:
+                from app.services.debt_scorer import DebtScorer
 
-            detector = RegressionDetector(self.db)
-            alerts = detector.detect_regressions(session_id)
-            if alerts:
-                logger.info("Detected %d regression(s) in session %d", len(alerts), session_id)
+                scorer = DebtScorer(self.db)
+                analysis.debt_score = scorer.compute_score(analysis)
+                self.db.commit()
+            except Exception as e:
+                logger.warning("Failed to compute debt score for session %d: %s", session_id, e)
+
+            try:
+                from app.services.regression_detector import RegressionDetector
+
+                detector = RegressionDetector(self.db)
+                alerts = detector.detect_regressions(session_id)
+                if alerts:
+                    logger.info("Detected %d regression(s) in session %d", len(alerts), session_id)
+            except Exception as e:
+                logger.warning("Regression detection failed for session %d: %s", session_id, e)
             self.db.refresh(analysis)
             return analysis
 

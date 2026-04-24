@@ -43,6 +43,8 @@ class RegressionDetector:
 
         alerts: list[RegressionAlert] = []
         for call in calls:
+            if call.duration_ms < 50:
+                continue
             baseline = self.compute_baseline(session.app_name, call.function_name, session_id)
             if baseline is None or baseline <= 0:
                 continue
