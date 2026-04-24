@@ -3,11 +3,19 @@
 import difflib
 import json
 
+import anthropic
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.core.logging import logger
 from app.db.repository import AnalysisRepository, CodeIndexRepository
-from app.models.database import Analysis, AnalysisFeedback, AnalysisSuggestion, IndexedFunction
+from app.models.database import (
+    Analysis,
+    AnalysisFeedback,
+    AnalysisSuggestion,
+    AppLogSession,
+    IndexedFunction,
+)
 
 
 class FixRecommender:
@@ -16,13 +24,15 @@ class FixRecommender:
     def __init__(self, db: Session):
         self.db = db
 
-    def enrich_analysis(self, analysis: Analysis) -> Analysis:
+    def enrich_analysis(
+        self, analysis: Analysis, session: AppLogSession | None = None
+    ) -> Analysis:
         """Enrich all suggestions in an analysis with diffs and confidence."""
         if not analysis.suggestions:
             return analysis
 
         for suggestion in analysis.suggestions:
-            self._enrich_suggestion(suggestion, analysis)
+            self._enrich_suggestion(suggestion, analysis, session=session)
 
         try:
             self.db.commit()
@@ -33,7 +43,10 @@ class FixRecommender:
         return analysis
 
     def _enrich_suggestion(
-        self, suggestion: AnalysisSuggestion, analysis: Analysis
+        self,
+        suggestion: AnalysisSuggestion,
+        analysis: Analysis,
+        session: AppLogSession | None = None,
     ) -> None:
         """Enrich a single suggestion with diff and confidence."""
         # 1. Generate enriched diff from diff_hint
@@ -46,10 +59,85 @@ class FixRecommender:
             if enriched:
                 suggestion.enriched_diff = enriched
 
+        if (
+            (not suggestion.enriched_diff or len(suggestion.enriched_diff) < 50)
+            and session is not None
+        ):
+            ai_diff = self._generate_ai_diff(suggestion, session)
+            if ai_diff:
+                suggestion.enriched_diff = ai_diff
+
         # 2. Compute confidence score
         suggestion.confidence_score = self._compute_confidence(
             suggestion, analysis
         )
+
+    def _generate_ai_diff(
+        self,
+        suggestion: AnalysisSuggestion,
+        session: AppLogSession | None,
+    ) -> str | None:
+        try:
+            target_file = (suggestion.target_file or "").strip()
+            if not target_file:
+                return None
+            if session is None or not session.source_repo:
+                return None
+
+            ext = target_file.rsplit(".", 1)[-1].lower() if "." in target_file else ""
+            language_map = {
+                "py": "python",
+                "c": "c",
+                "cpp": "cpp",
+                "js": "javascript",
+                "ts": "typescript",
+                "go": "go",
+                "java": "java",
+                "rs": "rust",
+            }
+            language = language_map.get(ext, "text")
+
+            source_code = ""
+            try:
+                from app.services.app_ai_engine import AppAIEngine
+
+                source_code = (
+                    AppAIEngine(self.db)._fetch_source(session, target_file, None) or ""
+                )
+            except Exception:
+                source_code = ""
+
+            prompt = (
+                f"You are a {language} expert. Here is the performance issue:\n"
+                f"Function: {suggestion.target_function}\n"
+                f"File: {target_file}\n"
+                f"Problem: {suggestion.description}\n"
+                f"Estimated saving: {suggestion.estimated_saving_ms}ms\n"
+                "Current source code (may be empty if unavailable):\n"
+                f"```{language}\n"
+                f"{source_code}\n"
+                "```\n"
+                f"Generate a REAL {language} before/after code diff that implements\n"
+                "the fix. Use unified diff format (--- a/file / +++ b/file).\n"
+                "If source is empty, generate a realistic example based on the\n"
+                "function name and problem description.\n"
+                "Return ONLY the diff. No explanation. No markdown fences.\n"
+                f"Start with --- a/{target_file}"
+            )
+
+            client = anthropic.Anthropic(api_key=get_settings().ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            result = response.content[0].text if response.content else ""
+            if not result or not result.strip().startswith("---"):
+                return None
+            return result.strip()
+        except Exception as e:
+            logger.warning("Failed to generate AI diff for suggestion %s: %s", suggestion.id, e)
+            return None
 
     def _generate_unified_diff(
         self, file_path: str, function_name: str | None, diff_hint: str

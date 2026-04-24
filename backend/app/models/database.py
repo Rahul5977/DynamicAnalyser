@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     Index,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -382,3 +383,22 @@ class LogFormatSchema(Base):
 
     def __repr__(self) -> str:
         return f"<LogFormatSchema {self.format_name} app={self.app_name}>"
+
+
+class PatternConfidence(Base):
+    __tablename__ = "pattern_confidence"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    app_name = Column(String(255), nullable=False)
+    anti_pattern = Column(String(256), nullable=False)
+    accepted_count = Column(Integer, default=0, nullable=False)
+    rejected_count = Column(Integer, default=0, nullable=False)
+    partial_count = Column(Integer, default=0, nullable=False)
+    total_estimated_saving_ms = Column(Integer, default=0)
+    acceptance_rate = Column(Float, default=0.5)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("app_name", "anti_pattern"),
+        Index("ix_pattern_confidence_app", "app_name"),
+    )

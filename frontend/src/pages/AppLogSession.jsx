@@ -6,13 +6,12 @@ import {
   analyseAppSession,
   getAppTrace,
   indexSourceForSession,
-  submitFeedback,
   sendChatMessage,
   getChatHistory,
 } from "../services/api";
-import SuggestionCard from "../components/SuggestionCard";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
+import { EffortBadge } from "../components/StatusBadge";
 
 function formatMs(ms) {
   if (ms === null || ms === undefined) return "—";
@@ -27,6 +26,114 @@ function pct(part, total) {
 function barColor(v, max) {
   const r = v / (max || 1);
   return r > 0.7 ? "#ef4444" : r > 0.35 ? "#f59e0b" : "#22c55e";
+}
+
+function LocalSuggestionCard({ suggestion, onFeedback }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const diff = suggestion.enriched_diff || suggestion.diff_hint;
+  const formatMsLocal = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
+
+  const getLineStyle = (line) => {
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return { color: "#888", fontWeight: 500 };
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      return { background: "#EAF3DE", color: "#1A6B3A" };
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      return { background: "#FCEBEB", color: "#8B1A1A" };
+    }
+    if (line.startsWith("@@")) {
+      return { background: "#E6F1FB", color: "#0C447C", fontStyle: "italic" };
+    }
+    return { color: "var(--color-text-secondary)" };
+  };
+
+  return (
+    <div className="suggestion-card">
+      <h4>
+        #{suggestion.rank} {suggestion.title}
+      </h4>
+      <p>{suggestion.description}</p>
+      <div className="suggestion-meta">
+        {suggestion.target_file && (
+          <span>
+            {suggestion.target_file}
+            {suggestion.target_function ? `:${suggestion.target_function}` : ""}
+          </span>
+        )}
+        <span style={{ color: "var(--green)", fontWeight: 600 }}>
+          ~{formatMsLocal(suggestion.estimated_saving_ms)} saving
+        </span>
+        <EffortBadge effort={suggestion.effort} />
+        {suggestion.confidence_score != null && (
+          <span>Confidence: {Math.round(suggestion.confidence_score * 100)}%</span>
+        )}
+        {suggestion.anti_pattern && (
+          <span className="badge badge-warning">{suggestion.anti_pattern}</span>
+        )}
+      </div>
+      {diff && (
+        <>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ marginTop: 8 }}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Hide diff" : "Show diff"}
+          </button>
+          {expanded && (
+            <div className="diff-block" style={{ position: "relative" }}>
+              <div style={{ color: "#1A6B3A", fontSize: 11, fontWeight: 600, marginBottom: 6 }}>
+                AI-Generated Code Diff
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ position: "absolute", top: 0, right: 0 }}
+                onClick={() => navigator.clipboard.writeText(suggestion.enriched_diff || "")}
+              >
+                Copy diff
+              </button>
+              <pre
+                style={{
+                  fontSize: 11,
+                  lineHeight: 1.7,
+                  fontFamily: "monospace",
+                  overflowX: "auto",
+                  margin: 0,
+                  padding: "10px 0",
+                }}
+              >
+                {diff.split("\n").map((line, i) => (
+                  <div key={i} style={getLineStyle(line)}>
+                    {line}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          )}
+        </>
+      )}
+      {onFeedback && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => onFeedback(suggestion.id, "accepted")}
+          >
+            Accept
+          </button>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => onFeedback(suggestion.id, "rejected")}
+          >
+            Reject
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Build a GitHub blob URL from a repo URL, file path, and line number. */
@@ -400,13 +507,19 @@ function FunctionSelectorTable({ calls, totalMs, selectedFunctions, onSelectionC
 
 // ── AI Analysis panel ─────────────────────────────────────────────────────────
 
-function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSelection }) {
+function AIAnalysisPanel({
+  sessionId,
+  appName,
+  sessionStatus,
+  targetFunctions,
+  onClearSelection,
+}) {
   const [analysis, setAnalysis]     = useState(null);
-  const [loading, setLoading]       = useState(false);
   const [analysing, setAnalysing]   = useState(false);
   const [polling, setPolling]       = useState(false);
   const [error, setError]           = useState(null);
   const [feedbackSent, setFeedbackSent] = useState({});
+  const [patternRows, setPatternRows] = useState([]);
   const pollRef = useRef(null);
 
   // Reset panel whenever the target function selection changes
@@ -449,12 +562,40 @@ function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSel
 
   const handleFeedback = async (analysisId, suggestionId, verdict) => {
     try {
-      await submitFeedback(analysisId, { suggestion_id: suggestionId, verdict });
+      const res = await fetch(`/api/app-logs/sessions/${sessionId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggestion_id: suggestionId, verdict, comment: null }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.detail || err.error || "Failed to submit feedback");
+      }
       setFeedbackSent((prev) => ({ ...prev, [suggestionId]: verdict }));
+      await loadPatternConfidence();
     } catch (e) {
       console.error("Feedback failed:", e.message);
     }
   };
+
+  const loadPatternConfidence = async () => {
+    if (!appName) return;
+    try {
+      const res = await fetch(`/api/app-logs/apps/${encodeURIComponent(appName)}/pattern-confidence`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows = (data.patterns || []).filter(
+        (r) => (r.accepted_count + r.rejected_count + r.partial_count) > 0
+      );
+      setPatternRows(rows);
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (analysis) {
+      loadPatternConfidence();
+    }
+  }, [analysis, appName]);
 
   const busy = analysing || polling;
 
@@ -559,6 +700,76 @@ function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSel
             </div>
           )}
 
+          {patternRows.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Pattern Learning</div>
+              <div
+                style={{
+                  border: "0.5px solid var(--color-border-tertiary)",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.5fr 120px 110px",
+                    gap: 8,
+                    padding: "8px 10px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--color-text-secondary)",
+                    background: "var(--color-background-secondary)",
+                  }}
+                >
+                  <div>Pattern</div>
+                  <div>Acceptance</div>
+                  <div>Feedbacks</div>
+                </div>
+                {patternRows.map((row) => {
+                  const accepted = row.accepted_count || 0;
+                  const rejected = row.rejected_count || 0;
+                  const partial = row.partial_count || 0;
+                  const total = accepted + rejected + partial;
+                  const acceptedPct = total ? Math.round((accepted / total) * 100) : 0;
+                  const rejectedPct = total ? Math.round((rejected / total) * 100) : 0;
+                  return (
+                    <div
+                      key={row.anti_pattern}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.5fr 120px 110px",
+                        gap: 8,
+                        padding: "8px 10px",
+                        fontSize: 12,
+                        borderTop: "0.5px solid var(--color-border-tertiary)",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ color: "var(--color-text-primary)" }}>{row.anti_pattern}</div>
+                      <div>
+                        <div
+                          style={{
+                            width: 100,
+                            height: 8,
+                            borderRadius: 999,
+                            overflow: "hidden",
+                            background: "var(--color-background-secondary)",
+                            display: "flex",
+                          }}
+                        >
+                          <div style={{ width: `${acceptedPct}%`, background: "#22c55e" }} />
+                          <div style={{ width: `${rejectedPct}%`, background: "#ef4444" }} />
+                        </div>
+                      </div>
+                      <div style={{ color: "var(--color-text-secondary)" }}>{total}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Suggestion cards */}
           {analysis.suggestions?.length > 0 && (
             <div style={{ marginTop: 16 }}>
@@ -567,7 +778,7 @@ function AIAnalysisPanel({ sessionId, sessionStatus, targetFunctions, onClearSel
               </div>
               {analysis.suggestions.map((s) => (
                 <div key={s.id} style={{ marginBottom: 12 }}>
-                  <SuggestionCard
+                  <LocalSuggestionCard
                     suggestion={s}
                     onFeedback={
                       !feedbackSent[s.id]
@@ -1047,6 +1258,7 @@ export default function AppLogSession() {
       {hasSelection && (
         <AIAnalysisPanel
           sessionId={id}
+          appName={session.app_name}
           sessionStatus={session.status}
           targetFunctions={Array.from(selectedFunctions)}
           onClearSelection={() => setSelectedFunctions(new Set())}

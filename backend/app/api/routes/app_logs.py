@@ -21,7 +21,7 @@ import json
 import os
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -29,11 +29,16 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.logging import logger
 from app.db.session import get_db
-from app.models.database import AppFunctionCall, AppLogSession, Analysis
+from app.models.database import (
+    AppFunctionCall,
+    AppLogSession,
+    Analysis,
+    AnalysisSuggestion,
+    AnalysisFeedback,
+)
 from app.models.schemas import (
     AnalysisResponse,
     AppFunctionCallResponse,
-    AppLogAnalyseResponse,
     AppLogSessionDetail,
     AppLogSessionResponse,
     AppLogUploadResponse,
@@ -52,6 +57,12 @@ router = APIRouter()
 
 class AppAnalyseRequest(BaseModel):
     target_functions: list[str] | None = None
+
+
+class AppFeedbackRequest(BaseModel):
+    suggestion_id: int
+    verdict: str
+    comment: str | None = None
 settings = get_settings()
 
 _ALLOWED_FORMATS = {"auto", "unknown", "json", "syslog", "tshark", "logfmt",
@@ -474,3 +485,59 @@ def get_app_session_analysis(session_id: int, db: Session = Depends(get_db)):
             detail=f"No analysis found for session {session_id}. Run POST /analyse first.",
         )
     return _analysis_to_response(analysis)
+
+
+@router.post("/app-logs/sessions/{session_id}/feedback")
+def submit_app_feedback(
+    session_id: int,
+    payload: AppFeedbackRequest,
+    db: Session = Depends(get_db),
+):
+    if payload.verdict not in {"accepted", "rejected", "partial"}:
+        raise HTTPException(status_code=422, detail="verdict must be accepted|rejected|partial")
+
+    suggestion = db.get(AnalysisSuggestion, payload.suggestion_id)
+    if not suggestion:
+        raise HTTPException(status_code=404, detail=f"Suggestion {payload.suggestion_id} not found")
+
+    analysis = db.get(Analysis, suggestion.analysis_id)
+    if not analysis or not analysis.app_log_session_id:
+        raise HTTPException(status_code=400, detail="Suggestion is not linked to an app-log analysis")
+    if analysis.app_log_session_id != session_id:
+        raise HTTPException(status_code=400, detail="Suggestion does not belong to this session")
+
+    session = db.get(AppLogSession, analysis.app_log_session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="App log session not found")
+
+    feedback = AnalysisFeedback(
+        analysis_id=analysis.id,
+        suggestion_id=suggestion.id,
+        verdict=payload.verdict,
+        comment=payload.comment,
+    )
+    db.add(feedback)
+    db.commit()
+
+    from app.services.pattern_confidence import PatternConfidenceService
+
+    new_rate = PatternConfidenceService(db).record_feedback(
+        app_name=session.app_name,
+        anti_pattern=suggestion.anti_pattern or "",
+        verdict=payload.verdict,
+        saving_ms=suggestion.estimated_saving_ms,
+    )
+    return {
+        "status": "recorded",
+        "app_name": session.app_name,
+        "anti_pattern": suggestion.anti_pattern,
+        "new_acceptance_rate": new_rate,
+    }
+
+
+@router.get("/app-logs/apps/{app_name}/pattern-confidence")
+def get_pattern_confidence_for_app(app_name: str, db: Session = Depends(get_db)):
+    from app.services.pattern_confidence import PatternConfidenceService
+
+    rows = PatternConfidenceService(db).get_all_for_app(app_name)
+    return {"app_name": app_name, "patterns": rows}

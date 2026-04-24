@@ -20,6 +20,7 @@ from app.models.database import (
     Analysis,
     AnalysisSuggestion,
     AnalysisFeedback,
+    AppLogSession,
 )
 
 
@@ -508,3 +509,31 @@ class AnalysisRepository:
             except (json.JSONDecodeError, TypeError):
                 continue
         return count
+
+    def get_feedback_summary_for_app(self, app_name: str, limit: int = 15) -> list[dict]:
+        rows = (
+            self.db.query(
+                AnalysisFeedback.verdict,
+                AnalysisFeedback.comment,
+                AnalysisSuggestion.title,
+                AnalysisSuggestion.anti_pattern,
+                AnalysisSuggestion.estimated_saving_ms,
+            )
+            .join(AnalysisSuggestion, AnalysisFeedback.suggestion_id == AnalysisSuggestion.id)
+            .join(Analysis, AnalysisFeedback.analysis_id == Analysis.id)
+            .join(AppLogSession, Analysis.app_log_session_id == AppLogSession.id)
+            .filter(AppLogSession.app_name == app_name)
+            .order_by(desc(AnalysisFeedback.created_at))
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "verdict": r.verdict,
+                "suggestion_title": r.title,
+                "anti_pattern": r.anti_pattern or "",
+                "estimated_saving_ms": r.estimated_saving_ms,
+                "comment": r.comment or "",
+            }
+            for r in rows
+        ]

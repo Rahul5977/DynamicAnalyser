@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.logging import logger
 from app.models.database import Analysis, AnalysisSuggestion, AppFunctionCall, AppLogSession
+from app.services.fix_recommender import FixRecommender
 
 
 # ── LLM response schema ────────────────────────────────────────────────────────
@@ -201,6 +202,8 @@ class AppAIEngine:
 
             self.db.add_all(suggestions)
             self.db.commit()
+            recommender = FixRecommender(self.db)
+            recommender.enrich_analysis(analysis, session=session)
             self.db.refresh(analysis)
             return analysis
 
@@ -300,6 +303,14 @@ class AppAIEngine:
                         lines += ["", f"Call chain for '{fn}':", chain_str]
                 except (json.JSONDecodeError, KeyError):
                     pass
+
+        from app.services.pattern_confidence import PatternConfidenceService
+
+        svc = PatternConfidenceService(self.db)
+        confidence_ctx = svc.get_confidence_context(session.app_name)
+        if confidence_ctx:
+            lines.append("")
+            lines.append(confidence_ctx)
 
         lines += [
             "",
