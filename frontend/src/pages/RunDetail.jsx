@@ -1,12 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-  ResponsiveContainer, ReferenceLine,
-} from "recharts";
-import {
   getRun, getRunTrace, getLatestAnalysis, analyseRun, submitFeedback,
-  getRepoRuns,
 } from "../services/api";
 import StatusBadge from "../components/StatusBadge";
 import Flamegraph from "../components/Flamegraph";
@@ -22,7 +17,6 @@ export default function RunDetail() {
   const [run, setRun] = useState(null);
   const [trace, setTrace] = useState(null);
   const [analysis, setAnalysis] = useState(null);
-  const [trend, setTrend] = useState([]);
   const [loading, setLoading] = useState(true);
   const [analysing, setAnalysing] = useState(false);
   const [error, setError] = useState(null);
@@ -42,12 +36,6 @@ export default function RunDetail() {
         setRun(r);
         setTrace(t);
         setAnalysis(a);
-        // Fetch trend data
-        if (r.github_run_id) {
-          // We need repo info to fetch runs — derive from run data
-          // The run doesn't have repo info directly in the schema, so we'll skip trend for now
-          // unless we can parse it from context
-        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));

@@ -282,46 +282,6 @@ class DashboardSummary(BaseModel):
     recent_runs: list[PipelineRunSummary] = []
 
 
-class DurationTrendPoint(BaseModel):
-    run_number: int
-    created_at: datetime
-    total_duration_ms: int
-    p50_ms: int | None = None
-    p95_ms: int | None = None
-
-
-class StepEvolutionPoint(BaseModel):
-    run_number: int
-    created_at: datetime
-    step_name: str
-    duration_ms: int
-    pct_of_total: float
-
-
-class FixImpactEntry(BaseModel):
-    suggestion_title: str
-    anti_pattern: str | None = None
-    before_avg_ms: float
-    after_avg_ms: float
-    improvement_ms: float
-    improvement_pct: float
-
-
-class RepoAnalyticsResponse(BaseModel):
-    repository: str
-    duration_trend: list[DurationTrendPoint]
-    step_evolution: list[StepEvolutionPoint]
-    fix_impacts: list[FixImpactEntry]
-    anti_pattern_frequency: dict[str, int]
-
-
-class DemoSeedResponse(BaseModel):
-    repos_created: int
-    runs_created: int
-    analyses_created: int
-    message: str
-
-
 # ── App Log Schemas ───────────────────────────────────────────────────────────
 
 class AppFunctionCallResponse(BaseModel):

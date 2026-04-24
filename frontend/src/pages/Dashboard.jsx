@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDashboardSummary, listRepos, seedDemo, listAppSessions, deleteAllAppSessions } from "../services/api";
+import { getDashboardSummary, listRepos, listAppSessions } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
 
@@ -22,7 +22,6 @@ function CICDDashboard() {
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [seeding, setSeeding] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -34,24 +33,11 @@ function CICDDashboard() {
 
   useEffect(() => { load(); }, []);
 
-  const handleSeed = async () => {
-    setSeeding(true);
-    try { await seedDemo(); load(); }
-    catch (e) { setError(e.message); }
-    finally { setSeeding(false); }
-  };
-
   if (loading) return <div className="loading">Loading CI/CD data...</div>;
   if (error) return <div className="error-msg">{error}</div>;
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button className="btn btn-secondary" onClick={handleSeed} disabled={seeding}>
-          {seeding ? "Seeding..." : "Load Demo Data"}
-        </button>
-      </div>
-
       {summary && (
         <div className="kpi-grid">
           <KPICard label="Repos Tracked" value={summary.total_repos} />
@@ -66,7 +52,7 @@ function CICDDashboard() {
         <div className="card-title">Tracked Repositories</div>
         {repos.length === 0 ? (
           <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-            No repositories tracked yet. Use "Load Demo Data" or add one in Settings.
+            No repositories tracked yet. Add one in Settings or use Analyze Repo.
           </p>
         ) : (
           <div className="table-wrap">
@@ -158,7 +144,6 @@ function AppLogsDashboard() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -169,21 +154,6 @@ function AppLogsDashboard() {
   };
 
   useEffect(() => { load(); }, []);
-
-  const handleDeleteAll = async () => {
-    if (!window.confirm(`Delete all ${sessions.length} session(s) and their analyses? This cannot be undone.`))
-      return;
-    setDeleting(true);
-    setError(null);
-    try {
-      await deleteAllAppSessions();
-      setSessions([]);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   if (loading) return <div className="loading">Loading app log sessions...</div>;
   if (error) return <div className="error-msg">{error}</div>;
@@ -196,17 +166,7 @@ function AppLogsDashboard() {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
-        {sessions.length > 0 && (
-          <button
-            className="btn btn-secondary"
-            onClick={handleDeleteAll}
-            disabled={deleting}
-            style={{ color: "#ef4444", borderColor: "#ef4444" }}
-          >
-            {deleting ? "Deleting…" : `Delete All (${sessions.length})`}
-          </button>
-        )}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <Link to="/app-logs/upload" className="btn btn-primary">
           + Upload Log File
         </Link>

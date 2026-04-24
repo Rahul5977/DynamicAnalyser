@@ -1,4 +1,4 @@
-"""Tests for Phase 4 API: dashboard, analytics, webhook, demo seed."""
+"""Tests for dashboard summary and GitHub webhook API."""
 
 import hashlib
 import hmac
@@ -164,41 +164,6 @@ class TestDashboardSummary:
         assert data["recent_runs"] == []
 
 
-# ── Repository Analytics Tests ───────────────────────────────────
-
-class TestRepoAnalytics:
-    def test_analytics_returns_data(self, seeded_dashboard_client):
-        response = seeded_dashboard_client.get(
-            "/api/repos/octocat/Hello-World/analytics?window=10"
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["repository"] == "octocat/Hello-World"
-        assert len(data["duration_trend"]) == 5
-        assert len(data["step_evolution"]) > 0
-        assert isinstance(data["anti_pattern_frequency"], dict)
-
-        # Duration trend should be ordered oldest first
-        trend = data["duration_trend"]
-        assert trend[0]["run_number"] < trend[-1]["run_number"]
-
-    def test_analytics_repo_not_found(self, empty_dashboard_client):
-        response = empty_dashboard_client.get(
-            "/api/repos/unknown/repo/analytics"
-        )
-        assert response.status_code == 404
-
-    def test_step_evolution_has_pct(self, seeded_dashboard_client):
-        response = seeded_dashboard_client.get(
-            "/api/repos/octocat/Hello-World/analytics"
-        )
-        data = response.json()
-        if data["step_evolution"]:
-            pt = data["step_evolution"][0]
-            assert "pct_of_total" in pt
-            assert 0 <= pt["pct_of_total"] <= 1
-
-
 # ── Webhook Tests ────────────────────────────────────────────────
 
 class TestWebhook:
@@ -249,43 +214,6 @@ class TestWebhook:
         )
         assert response.status_code == 200
         assert response.json()["status"] == "ignored"
-
-
-# ── Demo Seed Tests ──────────────────────────────────────────────
-
-class TestDemoSeed:
-    def test_seed_creates_data(self, empty_dashboard_client):
-        response = empty_dashboard_client.post("/api/demo/seed")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["repos_created"] == 1
-        assert data["runs_created"] == 20
-        assert data["analyses_created"] == 3
-        assert "successfully" in data["message"]
-
-    def test_seed_idempotent(self, empty_dashboard_client):
-        empty_dashboard_client.post("/api/demo/seed")
-        response = empty_dashboard_client.post("/api/demo/seed")
-        assert response.status_code == 200
-        # Should not crash on second seed
-
-    def test_dashboard_after_seed(self, empty_dashboard_client):
-        empty_dashboard_client.post("/api/demo/seed")
-        response = empty_dashboard_client.get("/api/dashboard/summary")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total_repos"] >= 1
-        assert data["total_runs"] >= 20
-
-    def test_analytics_after_seed(self, empty_dashboard_client):
-        empty_dashboard_client.post("/api/demo/seed")
-        response = empty_dashboard_client.get(
-            "/api/repos/demo-org/sample-api/analytics"
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["duration_trend"]) == 20
-        assert len(data["step_evolution"]) > 0
 
 
 # ── Webhook Signature Verification ───────────────────────────────
