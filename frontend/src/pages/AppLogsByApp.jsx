@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { listAppSessions } from "../services/api";
+import { getAppSessionAnalysis, getDebtTrend, listAppSessions } from "../services/api";
 
 function formatMs(ms) {
   if (!ms && ms !== 0) return "—";
@@ -26,6 +26,7 @@ export default function AppLogsByApp() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
+  const [debtBySession, setDebtBySession] = useState({});
 
   useEffect(() => {
     listAppSessions()
@@ -33,6 +34,39 @@ export default function AppLogsByApp() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [decoded]);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    let mounted = true;
+    Promise.allSettled(
+      sessions.map(async (s) => {
+        await getAppSessionAnalysis(s.id);
+        const trend = await getDebtTrend(s.id);
+        const current = (trend || []).filter((r) => r.session_id === s.id).slice(-1)[0];
+        return { sessionId: s.id, score: current?.score ?? null };
+      })
+    ).then((results) => {
+      if (!mounted) return;
+      const next = {};
+      results.forEach((r) => {
+        if (r.status === "fulfilled" && r.value?.score !== null) {
+          next[r.value.sessionId] = r.value.score;
+        }
+      });
+      setDebtBySession(next);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [sessions]);
+
+  const debtBadge = (score) => {
+    if (score === null || score === undefined) return null;
+    if (score <= 10) return { text: "✓ Healthy", bg: "rgba(34,197,94,.14)", color: "#15803d" };
+    if (score <= 20) return { text: "⚠ Moderate", bg: "rgba(245,158,11,.18)", color: "#b45309" };
+    if (score <= 35) return { text: "⚠ High Debt", bg: "rgba(249,115,22,.18)", color: "#c2410c" };
+    return { text: "✗ Critical", bg: "rgba(239,68,68,.16)", color: "#b91c1c" };
+  };
 
   if (loading) return <div className="loading">Loading sessions…</div>;
   if (error)   return <div className="error-msg">{error}</div>;
@@ -103,6 +137,7 @@ export default function AppLogsByApp() {
                   <th>Total time</th>
                   <th>Status</th>
                   <th>Uploaded</th>
+                  <th>Debt</th>
                   <th></th>
                 </tr>
               </thead>
@@ -129,6 +164,27 @@ export default function AppLogsByApp() {
                     </td>
                     <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
                       {formatDate(s.created_at)}
+                    </td>
+                    <td>
+                      {(() => {
+                        const badge = debtBadge(debtBySession[s.id]);
+                        if (!badge) return null;
+                        return (
+                          <span
+                            style={{
+                              background: badge.bg,
+                              color: badge.color,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              borderRadius: 999,
+                              padding: "3px 8px",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {badge.text}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td>
                       <Link

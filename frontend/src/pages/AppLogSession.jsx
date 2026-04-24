@@ -7,6 +7,7 @@ import {
   getAppTrace,
   indexSourceForSession,
   getAppBenchmark,
+  getDebtTrend,
   sendChatMessage,
   getChatHistory,
 } from "../services/api";
@@ -297,6 +298,193 @@ function BenchmarkCard({ appName }) {
         }}
       >
         Fleet&apos;s most common issue: {data.fleet_most_common_anti_pattern || "N/A"}
+      </div>
+    </div>
+  );
+}
+
+function RegressionPanel({ sessionId }) {
+  const [rows, setRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`/api/app-logs/sessions/${sessionId}/regressions`)
+      .then(async (r) => {
+        if (!r.ok) return [];
+        return r.json();
+      })
+      .then((data) => {
+        if (mounted) setRows((data || []).filter((x) => !x.resolved));
+      })
+      .finally(() => {
+        if (mounted) setLoaded(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId]);
+
+  const markResolved = async (alertId) => {
+    setRows((prev) => prev.filter((r) => r.id !== alertId));
+    try {
+      await fetch(`/api/app-logs/regressions/${alertId}/resolve`, { method: "POST" });
+    } catch (_) {}
+  };
+
+  if (!loaded || rows.length === 0) return null;
+
+  return (
+    <div className="card" style={{ border: "1px solid rgba(239,68,68,.35)" }}>
+      <div
+        style={{
+          background: "rgba(239,68,68,.12)",
+          color: "#b91c1c",
+          borderRadius: 8,
+          padding: "10px 12px",
+          fontWeight: 700,
+          fontSize: 14,
+          marginBottom: 10,
+        }}
+      >
+        ⚠ {rows.length} performance regression(s) detected in this session
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th>Baseline</th>
+              <th>Current</th>
+              <th>Slowdown</th>
+              <th>Severity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td><code style={{ fontSize: 13 }}>{r.function_name}</code></td>
+                <td>{formatMs(r.baseline_ms)}</td>
+                <td>{formatMs(r.current_ms)}</td>
+                <td>{r.ratio}× slower</td>
+                <td>
+                  <span
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      background: r.severity === "critical" ? "rgba(239,68,68,.15)" : "rgba(245,158,11,.18)",
+                      color: r.severity === "critical" ? "#b91c1c" : "#b45309",
+                    }}
+                  >
+                    {r.severity === "critical" ? "Critical" : "Warning"}
+                  </span>
+                </td>
+                <td>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => markResolved(r.id)}
+                  >
+                    Mark Resolved
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function debtMeta(score) {
+  if (score <= 10) return { label: "Healthy", color: "#22c55e" };
+  if (score <= 20) return { label: "Moderate", color: "#f59e0b" };
+  if (score <= 35) return { label: "High Debt", color: "#f97316" };
+  return { label: "Critical", color: "#ef4444" };
+}
+
+function DebtScoreCard({ sessionId }) {
+  const [trend, setTrend] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    getDebtTrend(sessionId)
+      .then((rows) => {
+        if (mounted) setTrend(rows || []);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId]);
+
+  if (loading || trend.length === 0) return null;
+
+  const last10 = trend.slice(-10);
+  const current = last10[last10.length - 1]?.score ?? 0;
+  const meta = debtMeta(current);
+
+  const min = Math.min(...last10.map((p) => p.score));
+  const max = Math.max(...last10.map((p) => p.score));
+  const range = Math.max(1, max - min);
+  const points = last10.map((p, i) => {
+    const x = (i / Math.max(1, last10.length - 1)) * 100;
+    const y = 55 - ((p.score - min) / range) * 45;
+    return { x, y, score: p.score };
+  });
+  const polyline = points.map((p) => `${p.x},${p.y}`).join(" ");
+  const trendUp = points.length > 1 ? points[points.length - 1].score > points[0].score : false;
+  const lineColor = trendUp ? "#ef4444" : "#22c55e";
+
+  return (
+    <div
+      style={{
+        background: "var(--color-background-primary)",
+        border: "0.5px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        padding: "1rem 1.25rem",
+        marginBottom: "1rem",
+      }}
+    >
+      <div
+        title="Score = sum of anti-pattern severity + unresolved issues"
+        style={{ fontSize: 48, fontWeight: 600, color: meta.color, lineHeight: 1 }}
+      >
+        {current}
+      </div>
+      <div style={{ marginTop: 4, color: "var(--color-text-secondary)", fontWeight: 600 }}>
+        {meta.label}
+      </div>
+
+      {last10.length <= 1 ? (
+        <div style={{ marginTop: 10, fontSize: 13, color: "var(--color-text-secondary)" }}>
+          First analysis for this app — baseline set
+        </div>
+      ) : (
+        <svg
+          viewBox="0 0 100 60"
+          preserveAspectRatio="none"
+          style={{ width: "100%", height: 60, marginTop: 10 }}
+        >
+          <polyline
+            fill="none"
+            stroke={lineColor}
+            strokeWidth="2"
+            points={polyline}
+          />
+          {points.map((p, i) => (
+            <circle key={i} cx={p.x} cy={p.y} r="1.8" fill={lineColor} />
+          ))}
+        </svg>
+      )}
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+        Score = sum of anti-pattern severity + unresolved issues
       </div>
     </div>
   );
@@ -1340,6 +1528,7 @@ export default function AppLogSession() {
       </div>
 
       <BenchmarkCard appName={session.app_name} />
+      <DebtScoreCard sessionId={id} />
 
       {/* Time breakdown flamegraph */}
       {calls.length > 0 && (
@@ -1347,6 +1536,10 @@ export default function AppLogSession() {
       )}
 
       {/* Function selector — always visible when calls exist */}
+      {calls.length > 0 && session.status === "completed" && (
+        <RegressionPanel sessionId={id} />
+      )}
+
       {calls.length > 0 && session.status === "completed" && (
         <FunctionSelectorTable
           calls={calls}

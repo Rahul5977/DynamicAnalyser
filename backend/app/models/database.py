@@ -203,6 +203,7 @@ class Analysis(Base):
     primary_bottleneck = Column(String(512), nullable=True)
     anti_patterns_json = Column(Text, nullable=True)
     estimated_total_saving_ms = Column(Integer, nullable=True)
+    debt_score = Column(Integer, nullable=True, default=None)
     raw_llm_response = Column(Text, nullable=True)
     llm_model = Column(String(128), nullable=True)
     llm_prompt_tokens = Column(Integer, nullable=True)
@@ -401,4 +402,25 @@ class PatternConfidence(Base):
     __table_args__ = (
         UniqueConstraint("app_name", "anti_pattern"),
         Index("ix_pattern_confidence_app", "app_name"),
+    )
+
+
+class RegressionAlert(Base):
+    __tablename__ = "regression_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    app_name = Column(String(255), nullable=False)
+    session_id = Column(Integer, ForeignKey("app_log_sessions.id"), nullable=False)
+    function_name = Column(String(512), nullable=False)
+    baseline_ms = Column(Float, nullable=False)
+    current_ms = Column(Float, nullable=False)
+    ratio = Column(Float, nullable=False)
+    severity = Column(String(16), nullable=False)  # warning or critical
+    resolved = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    session = relationship("AppLogSession")
+
+    __table_args__ = (
+        Index("ix_regression_app", "app_name", "resolved"),
     )

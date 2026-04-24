@@ -204,6 +204,17 @@ class AppAIEngine:
             self.db.commit()
             recommender = FixRecommender(self.db)
             recommender.enrich_analysis(analysis, session=session)
+            from app.services.debt_scorer import DebtScorer
+
+            scorer = DebtScorer(self.db)
+            analysis.debt_score = scorer.compute_score(analysis)
+            self.db.commit()
+            from app.services.regression_detector import RegressionDetector
+
+            detector = RegressionDetector(self.db)
+            alerts = detector.detect_regressions(session_id)
+            if alerts:
+                logger.info("Detected %d regression(s) in session %d", len(alerts), session_id)
             self.db.refresh(analysis)
             return analysis
 

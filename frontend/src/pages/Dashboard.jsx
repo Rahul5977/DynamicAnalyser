@@ -166,6 +166,8 @@ function AppLogsDashboard() {
 
   return (
     <>
+      <RegressionAlertsSummary />
+
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <Link to="/app-logs/upload" className="btn btn-primary">
           + Upload Log File
@@ -255,6 +257,80 @@ function AppLogsDashboard() {
         )}
       </div>
     </>
+  );
+}
+
+function RegressionAlertsSummary() {
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/app-logs/regressions/active")
+      .then(async (r) => {
+        if (!r.ok) return [];
+        return r.json();
+      })
+      .then((data) => {
+        if (mounted) setAlerts(data || []);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (loading) return null;
+
+  if (alerts.length === 0) {
+    return (
+      <div style={{ marginBottom: 12 }}>
+        <span
+          style={{
+            display: "inline-block",
+            padding: "6px 12px",
+            borderRadius: 999,
+            background: "rgba(34,197,94,.14)",
+            color: "#15803d",
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          ✓ No regressions detected
+        </span>
+      </div>
+    );
+  }
+
+  const top3 = [...alerts].sort((a, b) => b.ratio - a.ratio).slice(0, 3);
+  const appCount = new Set(alerts.map((a) => a.app_name)).size;
+
+  return (
+    <div
+      style={{
+        marginBottom: 14,
+        border: "1px solid rgba(239,68,68,.35)",
+        borderRadius: 10,
+        padding: "10px 12px",
+        background: "rgba(239,68,68,.08)",
+      }}
+    >
+      <div style={{ color: "#b91c1c", fontWeight: 700, marginBottom: 6 }}>
+        ⚠ {alerts.length} active regressions across {appCount} apps
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {top3.map((a) => (
+          <div key={a.id} style={{ fontSize: 13, color: "var(--text-primary)" }}>
+            {a.app_name} / <code style={{ fontSize: 12 }}>{a.function_name}</code> / {a.ratio}× slower
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Link to="/app-logs/regressions" className="btn btn-sm btn-secondary">View all</Link>
+      </div>
+    </div>
   );
 }
 

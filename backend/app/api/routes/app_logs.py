@@ -35,6 +35,7 @@ from app.models.database import (
     Analysis,
     AnalysisSuggestion,
     AnalysisFeedback,
+    RegressionAlert,
 )
 from app.models.schemas import (
     AnalysisResponse,
@@ -541,3 +542,58 @@ def get_pattern_confidence_for_app(app_name: str, db: Session = Depends(get_db))
 
     rows = PatternConfidenceService(db).get_all_for_app(app_name)
     return {"app_name": app_name, "patterns": rows}
+
+
+@router.get("/app-logs/sessions/{session_id}/debt-trend")
+def get_app_debt_trend(session_id: int, db: Session = Depends(get_db)):
+    from app.services.debt_scorer import DebtScorer
+
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return DebtScorer(db).get_trend(session_id, limit=20)
+
+
+@router.get("/app-logs/sessions/{session_id}/regressions")
+def get_session_regressions(session_id: int, db: Session = Depends(get_db)):
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    rows = (
+        db.query(RegressionAlert)
+        .filter(RegressionAlert.session_id == session_id)
+        .order_by(RegressionAlert.ratio.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "app_name": r.app_name,
+            "session_id": r.session_id,
+            "function_name": r.function_name,
+            "baseline_ms": r.baseline_ms,
+            "current_ms": r.current_ms,
+            "ratio": r.ratio,
+            "severity": r.severity,
+            "resolved": r.resolved,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/app-logs/regressions/active")
+def get_active_regressions(app_name: str | None = None, db: Session = Depends(get_db)):
+    from app.services.regression_detector import RegressionDetector
+
+    return RegressionDetector(db).get_active_alerts(app_name)
+
+
+@router.post("/app-logs/regressions/{alert_id}/resolve")
+def resolve_regression_alert(alert_id: int, db: Session = Depends(get_db)):
+    row = db.get(RegressionAlert, alert_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Regression alert {alert_id} not found")
+    row.resolved = True
+    db.commit()
+    return {"resolved": True, "alert_id": alert_id}
