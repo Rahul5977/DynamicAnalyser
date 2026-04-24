@@ -1,6 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  ArrowUp,
+  Bot,
+  Brain,
+  Flame,
+  GitBranch,
+  MessageCircle,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import {
   getActiveRegressions,
   getDashboardSummary,
   getFleetSummary,
@@ -384,14 +394,147 @@ export default function Dashboard() {
   const [mode, setMode] = useState(
     searchParams.get("mode") === "applogs" ? "applogs" : "cicd"
   ); // "cicd" | "applogs"
+  const [heroStats, setHeroStats] = useState({
+    functionCalls: 0,
+    appsTracked: 0,
+    analysesRun: 0,
+    timeSaved: "0ms",
+    regressions: 0,
+  });
 
   useEffect(() => {
     const m = searchParams.get("mode");
     if (m === "applogs" || m === "cicd") setMode(m);
   }, [searchParams]);
 
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([
+      listAppSessions().catch(() => []),
+      getDashboardSummary().catch(() => null),
+      getActiveRegressions().catch(() => []),
+    ]).then(([sessions, summary, regressions]) => {
+      if (!mounted) return;
+      const appSet = new Set((sessions || []).map((s) => s.app_name));
+      const totalCalls = (sessions || []).reduce((sum, s) => sum + (s.total_calls || 0), 0);
+      const totalCapturedMs = (sessions || []).reduce((sum, s) => sum + (s.total_duration_ms || 0), 0);
+      const avgSaving = summary?.avg_saving_ms || 0;
+      const combinedSavingMs = avgSaving > 0 ? avgSaving * (summary?.total_analyses || 0) : totalCapturedMs;
+      setHeroStats({
+        functionCalls: totalCalls,
+        appsTracked: appSet.size,
+        analysesRun: summary?.total_analyses || 0,
+        timeSaved: formatMs(combinedSavingMs),
+        regressions: (regressions || []).length,
+      });
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   return (
     <div>
+      <section className="dashboard-home fade-in">
+        <div className="dashboard-hero card">
+          <div className="hero-chip">
+            <span className="hero-chip-dot" />
+            AI-POWERED CODE ANALYSIS PLATFORM
+          </div>
+          <h1>DynamicAnalyser</h1>
+          <p>
+            Upload any application log or connect a GitHub repo. AI analyses every function call,
+            finds the bottleneck, links it to your source code, and tells you exactly how to fix it.
+          </p>
+          <div className="hero-actions">
+            <Link to="/app-logs/upload" className="btn btn-gradient hero-cta-primary">
+              <ArrowUp size={15} /> Upload App Log
+            </Link>
+            <button className="btn btn-secondary hero-cta-secondary" onClick={() => setMode("cicd")}>
+              <GitBranch size={15} /> Analyze GitHub Repo
+            </button>
+          </div>
+        </div>
+
+        <div className="hero-stat-grid">
+          <div className="hero-stat-card">
+            <div className="hero-stat-label">Functions Analysed</div>
+            <div className="hero-stat-value">{heroStats.functionCalls.toLocaleString()}</div>
+          </div>
+          <div className="hero-stat-card">
+            <div className="hero-stat-label">Apps Tracked</div>
+            <div className="hero-stat-value" style={{ color: "var(--green)" }}>{heroStats.appsTracked}</div>
+          </div>
+          <div className="hero-stat-card">
+            <div className="hero-stat-label">AI Analyses Run</div>
+            <div className="hero-stat-value" style={{ color: "var(--amber)" }}>{heroStats.analysesRun}</div>
+          </div>
+          <div className="hero-stat-card">
+            <div className="hero-stat-label">Time Saved</div>
+            <div className="hero-stat-value" style={{ color: "#fb7185" }}>{heroStats.timeSaved}</div>
+          </div>
+        </div>
+
+        <div className="hero-panel card">
+          <div className="hero-panel-title">Platform Capabilities</div>
+          <div className="hero-feature-grid">
+            <div className="hero-feature-item">
+              <Flame size={15} />
+              <div className="hero-feature-copy"><strong>Flamegraph</strong><span>Visual call breakdown</span></div>
+            </div>
+            <div className="hero-feature-item">
+              <Bot size={15} />
+              <div className="hero-feature-copy"><strong>AI Root Cause</strong><span>Finds why it is slow</span></div>
+            </div>
+            <div className="hero-feature-item">
+              <MessageCircle size={15} />
+              <div className="hero-feature-copy"><strong>Chat AI</strong><span>Ask in plain English</span></div>
+            </div>
+            <div className="hero-feature-item">
+              <Brain size={15} />
+              <div className="hero-feature-copy"><strong>Self-Learning</strong><span>Improves with feedback</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="hero-panel card">
+          <div className="hero-panel-title">How It Works</div>
+          <div className="hero-steps-grid">
+            <div className="hero-step">
+              <ArrowUp size={14} />
+              <em>STEP 01</em>
+              <span>Upload</span>
+              <small>Any log format</small>
+            </div>
+            <div className="hero-step">
+              <Bot size={14} />
+              <em>STEP 02</em>
+              <span>AI Analyses</span>
+              <small>Reads slow timings</small>
+            </div>
+            <div className="hero-step">
+              <Zap size={14} />
+              <em>STEP 03</em>
+              <span>Get Fixes</span>
+              <small>Real code diffs</small>
+            </div>
+            <div className="hero-step">
+              <TrendingUp size={14} />
+              <em>STEP 04</em>
+              <span>Track Progress</span>
+              <small>Debt score falls</small>
+            </div>
+          </div>
+        </div>
+
+        <div className="hero-status-pill">
+          <span className={`hero-status-dot ${heroStats.regressions > 0 ? "warn" : ""}`} />
+          {heroStats.regressions === 0
+            ? "All systems healthy - no regressions detected"
+            : `${heroStats.regressions} active regression(s) detected`}
+        </div>
+      </section>
+
       <div
         className="page-header"
         style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
