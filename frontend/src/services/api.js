@@ -111,3 +111,8 @@ export const sendChatMessage = (sessionId, message, history) =>
 
 export const getChatHistory = (sessionId) =>
   request(`/app-logs/sessions/${sessionId}/chat/history`);
+
+export const getAppBenchmark = (appName) =>
+  request(`/benchmarks/app-sessions?app_name=${encodeURIComponent(appName)}`);
+
+export const getFleetSummary = () => request("/benchmarks/fleet-summary");

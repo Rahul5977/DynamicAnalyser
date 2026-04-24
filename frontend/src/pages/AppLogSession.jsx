@@ -6,6 +6,7 @@ import {
   analyseAppSession,
   getAppTrace,
   indexSourceForSession,
+  getAppBenchmark,
   sendChatMessage,
   getChatHistory,
 } from "../services/api";
@@ -183,6 +184,120 @@ function FlameBar({ value, max }) {
   return (
     <div style={{ height: 8, background: "var(--border)", borderRadius: 4, overflow: "hidden", minWidth: 80 }}>
       <div style={{ height: "100%", width: `${w}%`, background: barColor(value, max), borderRadius: 4 }} />
+    </div>
+  );
+}
+
+function BenchmarkCard({ appName }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    setError("");
+    getAppBenchmark(appName)
+      .then((res) => {
+        if (mounted) setData(res);
+      })
+      .catch((e) => {
+        if (mounted) setError(e.message);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [appName]);
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          background: "var(--color-background-primary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+          borderRadius: "var(--border-radius-lg)",
+          padding: "1rem 1.25rem",
+          marginTop: "1rem",
+          color: "var(--color-text-secondary)",
+        }}
+      >
+        Loading benchmark...
+      </div>
+    );
+  }
+  if (error || !data || data.total_apps_in_fleet < 2) return null;
+  if (data.speed_percentile == null) {
+    return (
+      <div
+        style={{
+          background: "var(--color-background-primary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+          borderRadius: "var(--border-radius-lg)",
+          padding: "1rem 1.25rem",
+          marginTop: "1rem",
+          color: "var(--color-text-secondary)",
+        }}
+      >
+        Not enough data — you are the first {appName} session.
+      </div>
+    );
+  }
+
+  const percentileColor =
+    data.speed_percentile >= 50 ? "#22c55e" : data.speed_percentile >= 25 ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div
+      style={{
+        background: "var(--color-background-primary)",
+        border: "0.5px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        padding: "1rem 1.25rem",
+        marginTop: "1rem",
+      }}
+    >
+      <div
+        title={`Based on ${data.session_count} sessions across ${data.total_apps_in_fleet} applications`}
+        style={{ fontSize: 56, fontWeight: 500, color: percentileColor, lineHeight: 1 }}
+      >
+        {data.speed_percentile}th
+      </div>
+      <div style={{ marginTop: 6, color: "var(--color-text-secondary)", fontSize: 13 }}>
+        percentile — faster than {data.speed_percentile}% of {data.total_apps_in_fleet} tracked apps
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 14 }}>
+        <div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Your avg</div>
+          <div style={{ fontWeight: 600 }}>{formatMs(data.avg_duration_ms)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Fleet median</div>
+          <div style={{ fontWeight: 600 }}>{formatMs(data.fleet_p50_ms)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Fleet p95</div>
+          <div style={{ fontWeight: 600 }}>{formatMs(data.fleet_p95_ms)}</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: 12,
+          display: "inline-block",
+          fontSize: 12,
+          color: "var(--color-text-secondary)",
+          padding: "4px 8px",
+          borderRadius: 999,
+          background: "var(--color-background-secondary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+        }}
+      >
+        Fleet&apos;s most common issue: {data.fleet_most_common_anti_pattern || "N/A"}
+      </div>
     </div>
   );
 }
@@ -1218,6 +1333,13 @@ export default function AppLogSession() {
       {session.status === "failed" && session.error_message && (
         <div className="error-msg">{session.error_message}</div>
       )}
+
+      <div className="kpi-grid" style={{ marginBottom: 16 }}>
+        <KPICard label="Total duration" value={formatMs(totalMs)} />
+        <KPICard label="Total calls" value={session.total_calls ?? 0} />
+      </div>
+
+      <BenchmarkCard appName={session.app_name} />
 
       {/* Time breakdown flamegraph */}
       {calls.length > 0 && (
