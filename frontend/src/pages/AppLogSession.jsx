@@ -299,7 +299,7 @@ function BenchmarkCard({ appName }) {
       </div>
     );
   }
-  if (error || !data || data.total_apps_in_fleet < 2) return null;
+  if (error || !data) return null;
   if (data.speed_percentile == null) {
     return (
       <div
@@ -312,7 +312,7 @@ function BenchmarkCard({ appName }) {
           color: "var(--color-text-secondary)",
         }}
       >
-        Not enough data — you are the first {appName} session.
+        Upload a second app with a different app_name to see your ranking
       </div>
     );
   }

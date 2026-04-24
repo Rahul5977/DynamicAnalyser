@@ -95,10 +95,22 @@ def app_sessions_benchmark(app_name: str = Query(...), db: Session = Depends(get
     rank = 1 + sum(1 for r in app_rows if r["avg_ms"] < target["avg_ms"])
 
     if total_apps < 2:
-        speed_percentile = None
-    else:
-        less_or_equal = sum(1 for r in app_rows if r["avg_ms"] <= target["avg_ms"])
-        speed_percentile = int(round((less_or_equal / total_apps) * 100))
+        return {
+            "app_name": target["app_name"],
+            "avg_duration_ms": target["avg_ms"],
+            "session_count": target["session_count"],
+            "total_apps_in_fleet": total_apps,
+            "speed_percentile": None,
+            "message": "Not enough apps to benchmark — upload logs with a second app_name",
+            "fleet_p50_ms": _percentile(values, 0.5),
+            "fleet_p95_ms": _percentile(values, 0.95),
+            "fleet_most_common_anti_pattern": _most_common_anti_pattern(db),
+            "your_rank": rank,
+        }
+
+    below = sum(1 for r in app_rows if r["avg_ms"] < target["avg_ms"])
+    tied = sum(1 for r in app_rows if r["avg_ms"] == target["avg_ms"])
+    speed_percentile = int(round(((below + 0.5 * tied) / total_apps) * 100))
 
     return {
         "app_name": target["app_name"],

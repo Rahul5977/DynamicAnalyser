@@ -123,6 +123,15 @@ GO_LOG_PATTERNS = [
     ("fmt", "Fprintf"), ("fmt", "Sprintf"),
 ]
 
+C_LOG_PATTERNS = [
+    r'g_debug\s*\(',
+    r'g_warning\s*\(',
+    r'g_message\s*\(',
+    r'g_print\s*\(',
+    r'ws_debug\s*\(',
+    r'proto_tree_add_debug_text\s*\(',
+]
+
 LANGUAGE_CONFIG = {
     ".py": {
         "module": "tree_sitter_python",
@@ -165,6 +174,20 @@ LANGUAGE_CONFIG = {
         "module": "tree_sitter_go",
         "log_patterns": GO_LOG_PATTERNS,
         "func_node_types": ["function_declaration", "method_declaration"],
+        "class_node_type": None,
+        "call_node_type": "call_expression",
+    },
+    ".c": {
+        "module": "tree_sitter_c",
+        "log_patterns": C_LOG_PATTERNS,
+        "func_node_types": ["function_definition"],
+        "class_node_type": None,
+        "call_node_type": "call_expression",
+    },
+    ".h": {
+        "module": "tree_sitter_c",
+        "log_patterns": C_LOG_PATTERNS,
+        "func_node_types": ["function_definition", "declaration"],
         "class_node_type": None,
         "call_node_type": "call_expression",
     },
