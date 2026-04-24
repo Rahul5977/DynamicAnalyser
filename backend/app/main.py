@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import inspect, text
 
 from app.config import get_settings
 from app.core.exceptions import DynamicAnalyserError, to_http_exception
@@ -13,10 +14,40 @@ from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard
 from app.api.routes import app_logs
 
 
+def _ensure_sqlite_analysis_columns():
+    """Backfill new Analysis columns for existing SQLite databases.
+
+    SQLAlchemy's create_all() creates missing tables but does not ALTER
+    existing ones. This keeps older local DBs compatible after model updates.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    columns_to_add = {
+        "debt_score": "INTEGER",
+        "llm_prompt_tokens": "INTEGER",
+        "llm_completion_tokens": "INTEGER",
+    }
+
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        table_names = inspector.get_table_names()
+        if "analyses" not in table_names:
+            return
+
+        existing = {col["name"] for col in inspector.get_columns("analyses")}
+        for col_name, col_type in columns_to_add.items():
+            if col_name in existing:
+                continue
+            logger.info("Applying SQLite schema patch: analyses.%s", col_name)
+            conn.execute(text(f"ALTER TABLE analyses ADD COLUMN {col_name} {col_type}"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting DynamicAnalyser API")
     Base.metadata.create_all(bind=engine)
+    _ensure_sqlite_analysis_columns()
     logger.info("Database tables created")
     yield
     logger.info("Shutting down DynamicAnalyser API")
