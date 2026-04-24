@@ -112,6 +112,13 @@ export const getSessionRegressions = (sessionId) =>
 export const resolveRegressionAlert = (alertId) =>
   request(`/app-logs/regressions/${alertId}/resolve`, { method: "POST" });
 
+export const getActiveRegressions = (appName = null) =>
+  request(
+    appName
+      ? `/app-logs/regressions/active?app_name=${encodeURIComponent(appName)}`
+      : "/app-logs/regressions/active"
+  );
+
 export const sendChatMessage = (sessionId, message, history) =>
   request(`/app-logs/sessions/${sessionId}/chat`, {
     method: "POST",

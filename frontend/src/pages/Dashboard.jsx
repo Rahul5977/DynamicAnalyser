@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDashboardSummary, getFleetSummary, listRepos, listAppSessions } from "../services/api";
+import {
+  getActiveRegressions,
+  getDashboardSummary,
+  getFleetSummary,
+  listRepos,
+  listAppSessions,
+} from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
 
@@ -304,13 +310,12 @@ function RegressionAlertsSummary() {
 
   useEffect(() => {
     let mounted = true;
-    fetch("/api/app-logs/regressions/active")
-      .then(async (r) => {
-        if (!r.ok) return [];
-        return r.json();
-      })
+    getActiveRegressions()
       .then((data) => {
         if (mounted) setAlerts(data || []);
+      })
+      .catch(() => {
+        if (mounted) setAlerts([]);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -366,7 +371,7 @@ function RegressionAlertsSummary() {
         ))}
       </div>
       <div style={{ marginTop: 8 }}>
-        <Link to="/app-logs/regressions" className="btn btn-sm btn-secondary">View all</Link>
+        <Link to="/?mode=applogs" className="btn btn-sm btn-secondary">View all</Link>
       </div>
     </div>
   );
@@ -375,7 +380,12 @@ function RegressionAlertsSummary() {
 // ── Root Dashboard with mode toggle ──────────────────────────────────────────
 
 export default function Dashboard() {
-  const [mode, setMode] = useState("cicd"); // "cicd" | "applogs"
+  const initialMode = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const m = params.get("mode");
+    return m === "applogs" ? "applogs" : "cicd";
+  })();
+  const [mode, setMode] = useState(initialMode); // "cicd" | "applogs"
 
   return (
     <div>
