@@ -332,9 +332,9 @@ def index_source_for_session(
 
     # Trigger indexing
     try:
-        from app.services.ast_parser import CodeIndexer
-        indexer = CodeIndexer(db)
-        result = indexer.index_repo(repo.id, repo_name)
+        owner, name = repo_name.split("/", 1)
+        from app.api.routes.analysis import index_repo as index_repo_for_tracked_repo
+        result = index_repo_for_tracked_repo(owner=owner, name=name, request=None, db=db)
         return {
             "status": "completed",
             "repo": repo_name,

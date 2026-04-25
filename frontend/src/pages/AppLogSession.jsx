@@ -672,8 +672,12 @@ function SourceTrace({ sessionId, sourceRepo }) {
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div className="card-title" style={{ margin: 0 }}>Source Correlation</div>
-        <button className="btn btn-sm btn-secondary" onClick={loadTrace} disabled={loading}>
-          {loading ? "Loading…" : "Correlate"}
+        <button
+          className="btn btn-sm btn-secondary"
+          onClick={sourceRepo ? handleIndex : loadTrace}
+          disabled={loading || indexing || (!sourceRepo && !ghUrl)}
+        >
+          {indexing ? "Indexing…" : loading ? "Loading…" : "Correlate"}
         </button>
       </div>
 

@@ -77,13 +77,32 @@ def index_repo(
                 created_at=existing.created_at,
             )
 
-        # Create pending index record
-        code_index = CodeIndex(
-            repository_id=tracked_repo.id,
-            commit_sha=commit_sha,
-            status="running",
-        )
-        code_index = idx_store.create(code_index)
+        # Reuse existing record for this (repo, sha) pair to avoid
+        # UNIQUE constraint violations on retries.
+        if existing:
+            db.query(IndexedFunction).filter(
+                IndexedFunction.code_index_id == existing.id
+            ).delete(synchronize_session=False)
+            db.query(IndexedLogCall).filter(
+                IndexedLogCall.code_index_id == existing.id
+            ).delete(synchronize_session=False)
+            existing.status = "running"
+            existing.error_message = None
+            existing.completed_at = None
+            existing.total_functions = 0
+            existing.total_log_calls = 0
+            existing.language_breakdown = None
+            db.commit()
+            db.refresh(existing)
+            code_index = existing
+        else:
+            # Create pending index record
+            code_index = CodeIndex(
+                repository_id=tracked_repo.id,
+                commit_sha=commit_sha,
+                status="running",
+            )
+            code_index = idx_store.create(code_index)
 
         # Build the index
         try:
