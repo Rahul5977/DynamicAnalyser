@@ -7,7 +7,6 @@ import {
   getAppTrace,
   indexSourceForSession,
   getAppBenchmark,
-  getDebtTrend,
   getPatternConfidence,
   getSessionRegressions,
   resolveRegressionAlert,
@@ -221,22 +220,32 @@ function LocalSuggestionCard({ suggestion, onFeedback }) {
   );
 }
 
-/** Build a GitHub blob URL from a repo URL, file path, and line number. */
-function githubFileUrl(sourceRepo, filePath, lineNumber) {
+/** Encode each path segment for GitHub blob URLs (spaces, unicode, etc.). */
+function githubBlobPathSegments(filePath) {
+  return filePath.split("/").filter(Boolean).map((seg) => encodeURIComponent(seg)).join("/");
+}
+
+/**
+ * Build a GitHub blob URL. Use `gitRef` = indexed commit SHA when available
+ * (matches the tree you indexed). Hardcoding `main` breaks repos whose default
+ * branch is `master` (e.g. wireshark/wireshark).
+ */
+function githubFileUrl(sourceRepo, filePath, lineNumber, gitRef) {
   if (!sourceRepo || !filePath) return null;
-  // Normalise: accept https://github.com/owner/repo or owner/repo
   let base = sourceRepo.replace(/\.git$/, "").replace(/\/$/, "");
   if (!base.startsWith("http")) base = `https://github.com/${base}`;
   const line = lineNumber ? `#L${lineNumber}` : "";
-  return `${base}/blob/main/${filePath}${line}`;
+  const ref = (gitRef && String(gitRef).trim()) || "master";
+  const pathEnc = githubBlobPathSegments(filePath);
+  return `${base}/blob/${ref}/${pathEnc}${line}`;
 }
 
 // ── Source location badge ─────────────────────────────────────────────────────
 
-function SourceBadge({ sourceFile, sourceLine, sourceRepo }) {
+function SourceBadge({ sourceFile, sourceLine, sourceRepo, sourceCommitSha }) {
   if (!sourceFile) return null;
   const label = `${sourceFile.split("/").slice(-1)[0]}:${sourceLine || "?"}`;
-  const url = githubFileUrl(sourceRepo, sourceFile, sourceLine);
+  const url = githubFileUrl(sourceRepo, sourceFile, sourceLine, sourceCommitSha);
 
   const style = {
     display: "inline-block",
@@ -486,120 +495,9 @@ function RegressionPanel({ sessionId }) {
     </div>
   );
 }
-
-function debtMeta(score) {
-  if (score <= 10) return { label: "Healthy", color: "#22c55e" };
-  if (score <= 20) return { label: "Moderate", color: "#f59e0b" };
-  if (score <= 35) return { label: "High Debt", color: "#f97316" };
-  return { label: "Critical", color: "#ef4444" };
-}
-
-function DebtScoreCard({ sessionId }) {
-  const [trend, setTrend] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    getDebtTrend(sessionId)
-      .then((rows) => {
-        if (mounted) setTrend(rows || []);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [sessionId]);
-
-  if (loading) return null;
-  if (trend.length === 0) {
-    return (
-      <div
-        style={{
-          background: "var(--color-background-primary)",
-          border: "0.5px solid var(--color-border-tertiary)",
-          borderRadius: "var(--border-radius-lg)",
-          padding: "1rem 1.25rem",
-          marginBottom: "1rem",
-          color: "var(--color-text-secondary)",
-        }}
-      >
-        Technical debt score not yet calculated.{" "}
-        <span style={{ color: "var(--color-text-info)" }}>
-          Run AI analysis on this session to generate a score.
-        </span>
-      </div>
-    );
-  }
-
-  const last10 = trend.slice(-10);
-  const current = last10[last10.length - 1]?.score ?? 0;
-  const meta = debtMeta(current);
-
-  const min = Math.min(...last10.map((p) => p.score));
-  const max = Math.max(...last10.map((p) => p.score));
-  const range = Math.max(1, max - min);
-  const points = last10.map((p, i) => {
-    const x = (i / Math.max(1, last10.length - 1)) * 100;
-    const y = 55 - ((p.score - min) / range) * 45;
-    return { x, y, score: p.score };
-  });
-  const polyline = points.map((p) => `${p.x},${p.y}`).join(" ");
-  const trendUp = points.length > 1 ? points[points.length - 1].score > points[0].score : false;
-  const lineColor = trendUp ? "#ef4444" : "#22c55e";
-
-  return (
-    <div
-      style={{
-        background: "var(--color-background-primary)",
-        border: "0.5px solid var(--color-border-tertiary)",
-        borderRadius: "var(--border-radius-lg)",
-        padding: "1rem 1.25rem",
-        marginBottom: "1rem",
-      }}
-    >
-      <div
-        title="Score = sum of anti-pattern severity + unresolved issues"
-        style={{ fontSize: 48, fontWeight: 600, color: meta.color, lineHeight: 1 }}
-      >
-        {current}
-      </div>
-      <div style={{ marginTop: 4, color: "var(--color-text-secondary)", fontWeight: 600 }}>
-        {meta.label}
-      </div>
-
-      {last10.length <= 1 ? (
-        <div style={{ marginTop: 10, fontSize: 13, color: "var(--color-text-secondary)" }}>
-          First analysis for this app — baseline set
-        </div>
-      ) : (
-        <svg
-          viewBox="0 0 100 60"
-          preserveAspectRatio="none"
-          style={{ width: "100%", height: 60, marginTop: 10 }}
-        >
-          <polyline
-            fill="none"
-            stroke={lineColor}
-            strokeWidth="2"
-            points={polyline}
-          />
-          {points.map((p, i) => (
-            <circle key={i} cx={p.x} cy={p.y} r="1.8" fill={lineColor} />
-          ))}
-        </svg>
-      )}
-      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-        Score = sum of anti-pattern severity + unresolved issues
-      </div>
-    </div>
-  );
-}
-
 // ── Time-breakdown flamegraph with source badges ───────────────────────────────
 
-function TimeBreakdown({ calls, totalMs, sourceRepo }) {
+function TimeBreakdown({ calls, totalMs, sourceRepo, sourceCommitSha }) {
   // Aggregate by function name, keeping first source info seen
   const byFunc = {};
   for (const c of calls) {
@@ -635,6 +533,7 @@ function TimeBreakdown({ calls, totalMs, sourceRepo }) {
                   sourceFile={info.source_file}
                   sourceLine={info.source_line}
                   sourceRepo={sourceRepo}
+                  sourceCommitSha={sourceCommitSha}
                 />
               )}
             </div>
@@ -660,12 +559,13 @@ function TimeBreakdown({ calls, totalMs, sourceRepo }) {
 
 // ── Source trace panel ────────────────────────────────────────────────────────
 
-function SourceTrace({ sessionId, sourceRepo }) {
+function SourceTrace({ sessionId, sourceRepo, sourceCommitSha }) {
   const [trace, setTrace]         = useState(null);
   const [loading, setLoading]     = useState(false);
   const [indexing, setIndexing]   = useState(false);
   const [error, setError]         = useState(null);
   const [ghUrl, setGhUrl]         = useState(sourceRepo || "");
+  const [localRepoPath, setLocalRepoPath] = useState("");
   // Track whether the user successfully linked a repo in this session
   const [linkedRepo, setLinkedRepo] = useState(sourceRepo || "");
 
@@ -681,7 +581,10 @@ function SourceTrace({ sessionId, sourceRepo }) {
   const handleIndex = async () => {
     setIndexing(true); setError(null);
     try {
-      await indexSourceForSession(sessionId, ghUrl);
+      await indexSourceForSession(sessionId, {
+        github_url: ghUrl,
+        local_repo_path: localRepoPath.trim() || undefined,
+      });
       setLinkedRepo(ghUrl);
       await loadTrace();
     }
@@ -706,15 +609,29 @@ function SourceTrace({ sessionId, sourceRepo }) {
         <div style={{ marginTop: 12 }}>
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
             No source repo linked. Add a GitHub URL to map slow functions to source lines.
+            Optionally set a local clone path (fast indexing) if the server has{" "}
+            <code style={{ fontSize: 12 }}>AST_INDEX_LOCAL_ROOT</code> configured.
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <input
               type="url"
               placeholder="https://github.com/owner/repo"
               value={ghUrl}
               onChange={(e) => setGhUrl(e.target.value)}
               style={{
-                flex: 1, padding: "6px 12px", borderRadius: 6,
+                width: "100%", padding: "6px 12px", borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-input, var(--bg-card))",
+                color: "inherit", fontSize: 13,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Local clone (optional), e.g. /Users/you/Desktop/wireshark"
+              value={localRepoPath}
+              onChange={(e) => setLocalRepoPath(e.target.value)}
+              style={{
+                width: "100%", padding: "6px 12px", borderRadius: 6,
                 border: "1px solid var(--border)",
                 background: "var(--bg-input, var(--bg-card))",
                 color: "inherit", fontSize: 13,
@@ -724,8 +641,38 @@ function SourceTrace({ sessionId, sourceRepo }) {
               className="btn btn-sm btn-primary"
               onClick={handleIndex}
               disabled={indexing || !ghUrl}
+              style={{ alignSelf: "flex-start" }}
             >
               {indexing ? "Indexing…" : "Index & Correlate"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {effectiveRepo && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>
+            Re-index from a local clone (optional — much faster than GitHub API):
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="/path/to/wireshark clone"
+              value={localRepoPath}
+              onChange={(e) => setLocalRepoPath(e.target.value)}
+              style={{
+                flex: "1 1 240px", minWidth: 200, padding: "6px 12px", borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-input, var(--bg-card))",
+                color: "inherit", fontSize: 13,
+              }}
+            />
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={handleIndex}
+              disabled={indexing || !ghUrl}
+            >
+              {indexing ? "Indexing…" : "Index from disk & correlate"}
             </button>
           </div>
         </div>
@@ -748,7 +695,8 @@ function SourceTrace({ sessionId, sourceRepo }) {
               </thead>
               <tbody>
                 {trace.calls.filter((c) => c.source_file).slice(0, 30).map((c) => {
-                  const url = githubFileUrl(sourceRepo, c.source_file, c.source_line);
+                  const ref = trace.source_commit_sha || sourceCommitSha;
+                  const url = githubFileUrl(sourceRepo, c.source_file, c.source_line, ref);
                   return (
                     <tr key={c.id}>
                       <td><code style={{ fontSize: 13 }}>{c.function_name}</code></td>
@@ -1533,7 +1481,7 @@ function ChatPanel({ sessionId }) {
 
 // ── Function-calls table ──────────────────────────────────────────────────────
 
-function CallsTable({ calls, totalMs, sourceRepo }) {
+function CallsTable({ calls, totalMs, sourceRepo, sourceCommitSha }) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("duration");
   const maxDur = calls.length ? Math.max(...calls.map((c) => c.duration_ms)) : 1;
@@ -1600,7 +1548,7 @@ function CallsTable({ calls, totalMs, sourceRepo }) {
               </thead>
               <tbody>
                 {visible.slice(0, 300).map((c, i) => {
-                  const url = githubFileUrl(sourceRepo, c.source_file, c.source_line);
+                  const url = githubFileUrl(sourceRepo, c.source_file, c.source_line, sourceCommitSha);
                   return (
                     <tr key={c.id}>
                       <td style={{ color: "var(--text-muted)", fontSize: 12 }}>{i + 1}</td>
@@ -1743,11 +1691,15 @@ export default function AppLogSession() {
       </div>
 
       <BenchmarkCard appName={session.app_name} />
-      <DebtScoreCard sessionId={id} />
 
       {/* Time breakdown flamegraph */}
       {calls.length > 0 && (
-        <TimeBreakdown calls={calls} totalMs={totalMs} sourceRepo={session.source_repo} />
+        <TimeBreakdown
+          calls={calls}
+          totalMs={totalMs}
+          sourceRepo={session.source_repo}
+          sourceCommitSha={session.source_commit_sha}
+        />
       )}
 
       {/* Function selector — always visible when calls exist */}
@@ -1796,11 +1748,20 @@ export default function AppLogSession() {
       )}
 
       {/* Source correlation */}
-      <SourceTrace sessionId={id} sourceRepo={session.source_repo} />
+      <SourceTrace
+        sessionId={id}
+        sourceRepo={session.source_repo}
+        sourceCommitSha={session.source_commit_sha}
+      />
 
       {/* All individual calls table */}
       {calls.length > 0 && (
-        <CallsTable calls={calls} totalMs={totalMs} sourceRepo={session.source_repo} />
+        <CallsTable
+          calls={calls}
+          totalMs={totalMs}
+          sourceRepo={session.source_repo}
+          sourceCommitSha={session.source_commit_sha}
+        />
       )}
 
       {calls.length === 0 && session.status === "completed" && (

@@ -75,16 +75,23 @@ export const indexRepo = (owner, name) =>
 
 // ── App Log Analysis ──────────────────────────────────────────────────────────
 
+function formatApiError(errBody, fallback) {
+  const d = errBody?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d))
+    return d.map((x) => (typeof x === "object" && x.msg ? x.msg : JSON.stringify(x))).join("; ");
+  if (d && typeof d === "object" && typeof d.message === "string") return d.message;
+  return errBody?.error || fallback || "Request failed";
+}
+
 export const uploadAppLog = (formData) =>
-  fetch(`${BASE}/app-logs/upload`, { method: "POST", body: formData }).then(
-    async (r) => {
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({ error: r.statusText }));
-        throw new Error(err.detail || err.error || r.statusText);
-      }
-      return r.json();
+  fetch(`${BASE}/app-logs/upload`, { method: "POST", body: formData }).then(async (r) => {
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: r.statusText }));
+      throw new Error(formatApiError(err, r.statusText));
     }
-  );
+    return r.json();
+  });
 
 export const listAppSessions = () => request("/app-logs/sessions");
 
@@ -98,11 +105,23 @@ export const detectAppLogFormat = (lines, appName = "", customPattern = "") =>
   });
 
 // Phase 4 – source correlation
-export const indexSourceForSession = (id, githubUrl = "") =>
-  request(`/app-logs/sessions/${id}/index-source`, {
+// Second argument: GitHub URL string, or `{ github_url, local_repo_path?, commit_sha? }`
+export const indexSourceForSession = (id, githubUrlOrOpts = "") => {
+  const opts =
+    typeof githubUrlOrOpts === "string"
+      ? { github_url: githubUrlOrOpts }
+      : { ...githubUrlOrOpts };
+  const github_url = opts.github_url ?? opts.githubUrl ?? "";
+  const body = { github_url };
+  const local = opts.local_repo_path ?? opts.localRepoPath;
+  if (local && String(local).trim()) body.local_repo_path = String(local).trim();
+  const sha = opts.commit_sha ?? opts.commitSha;
+  if (sha && String(sha).trim()) body.commit_sha = String(sha).trim();
+  return request(`/app-logs/sessions/${id}/index-source`, {
     method: "POST",
-    body: JSON.stringify({ github_url: githubUrl }),
+    body: JSON.stringify(body),
   });
+};
 
 export const getAppTrace = (id) => request(`/app-logs/sessions/${id}/trace`);
 

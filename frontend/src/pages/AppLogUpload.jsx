@@ -12,15 +12,31 @@ const FORMATS = [
   { value: "logfmt",     label: "logfmt  (key=value, common in Go / Rust)" },
   { value: "tshark",     label: "tshark / Wireshark text export" },
   { value: "enter_exit", label: "Paired ENTER / EXIT tracing  (generic)" },
+  { value: "heuristic",  label: "Generic timings  (took X ms, elapsed, colon …)" },
   { value: "custom",     label: "Custom regex pattern" },
 ];
 
-const FORMAT_LABELS = Object.fromEntries(FORMATS.map((f) => [f.value, f.label.split("  ")[0]]));
+const FORMAT_LABELS = {
+  ...Object.fromEntries(FORMATS.map((f) => [f.value, f.label.split("  ")[0]])),
+  unknown: "Unknown",
+};
 
 function formatMs(ms) {
   if (!ms && ms !== 0) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
 }
+
+/** Human-readable size (bytes from File API). */
+function formatFileSize(bytes) {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+/** Only read the beginning of huge logs so the browser does not load multi‑GB files into RAM. */
+const DETECT_SLICE_BYTES = 512 * 1024;
+const DETECT_MAX_LINES = 500;
 
 // ── Detect-format preview panel ───────────────────────────────────────────────
 
@@ -29,13 +45,14 @@ function DetectPreview({ detection, onOverride, override }) {
   const { format, confidence, sample_records } = detection;
   const displayFmt = override || format;
   const confPct = Math.round(confidence * 100);
+  const fmtTitle = FORMAT_LABELS[displayFmt] || displayFmt;
 
   return (
     <div className="card" style={{ borderLeft: `3px solid ${confPct >= 60 ? "#22c55e" : confPct >= 35 ? "#f59e0b" : "#ef4444"}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>
-            Detected format: {FORMAT_LABELS[format] || format}
+            Detected format: {fmtTitle}
             <span style={{
               marginLeft: 10,
               fontSize: 12,
@@ -130,6 +147,7 @@ export default function AppLogUpload() {
   const [detection, setDetection]     = useState(null);   // DetectFormatResponse
   const [detecting, setDetecting]     = useState(false);
   const [formatOverride, setFormatOverride] = useState(null);
+  const [largeFileHint, setLargeFileHint] = useState(null);
 
   // ── File selection ────────────────────────────────────────────────────────
 
@@ -138,17 +156,28 @@ export default function AppLogUpload() {
     setDetection(null);
     setFormatOverride(null);
     setError(null);
+    setLargeFileHint(null);
 
-    // Read first 80 lines and call detect-format
     if (!selected) return;
+
+    const big = selected.size > 80 * 1024 * 1024;
+    if (big) {
+      setLargeFileHint(
+        `Large file (${formatFileSize(selected.size)}). Format preview uses only the first ${Math.round(DETECT_SLICE_BYTES / 1024)} KB for detection — upload still sends the full file.`,
+      );
+    }
+
     setDetecting(true);
     try {
-      const text = await selected.text();
-      const lines = text.split("\n").slice(0, 80);
+      const slice =
+        selected.size > DETECT_SLICE_BYTES
+          ? selected.slice(0, DETECT_SLICE_BYTES)
+          : selected;
+      const text = await slice.text();
+      const lines = text.split("\n").slice(0, DETECT_MAX_LINES);
       const result = await detectAppLogFormat(lines, appName, customPattern);
       setDetection(result);
     } catch (e) {
-      // Detection failure is non-fatal — user can still upload
       console.warn("Format detection failed:", e.message);
     } finally {
       setDetecting(false);
@@ -229,7 +258,24 @@ export default function AppLogUpload() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".log,.txt,.csv,.json,.out,.err,text/*"
+            accept={[
+              ".log",
+              ".txt",
+              ".TXT",
+              ".text",
+              ".csv",
+              ".tsv",
+              ".json",
+              ".out",
+              ".err",
+              ".trace",
+              ".ndjson",
+              "text/plain",
+              "text/csv",
+              "application/json",
+              "text/*",
+              "*/*",
+            ].join(",")}
             style={{ display: "none" }}
             onChange={onFileChange}
           />
@@ -238,9 +284,23 @@ export default function AppLogUpload() {
               <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
               <strong>{file.name}</strong>
               <div style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 4 }}>
-                {(file.size / 1024).toFixed(1)} KB
+                {formatFileSize(file.size)}
                 {detecting && <span style={{ marginLeft: 8 }}>· detecting format…</span>}
               </div>
+              {largeFileHint && (
+                <p style={{
+                  margin: "10px 0 0",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                  textAlign: "left",
+                  maxWidth: 420,
+                  marginLeft: "auto",
+                  marginRight: "auto",
+                  lineHeight: 1.4,
+                }}>
+                  {largeFileHint}
+                </p>
+              )}
               <button
                 type="button"
                 className="btn btn-sm btn-secondary"
@@ -255,7 +315,7 @@ export default function AppLogUpload() {
               <div style={{ fontSize: 40, marginBottom: 8 }}>📂</div>
               <p style={{ margin: 0, fontWeight: 500 }}>Drag &amp; drop a log file here</p>
               <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: 13 }}>
-                or click to browse · .log .txt .json .out or any plain-text format
+                or click to browse · including <strong>.txt</strong>, .log, .json, .csv, or any plain-text file
               </p>
             </div>
           )}

@@ -52,6 +52,86 @@ def _normalise(name: str) -> str:
     return name.lower()
 
 
+# Token aliases for tshark-style labels vs Wireshark C symbols (attach_req, etc.)
+_TOKEN_ALIASES = {
+    "request": "req",
+    "response": "rsp",
+    "command": "cmd",
+    "failure": "fail",
+    "security": "sec",
+    "information": "info",
+    "authentication": "auth",
+}
+
+
+def _expand_token(t: str) -> set[str]:
+    t = t.lower()
+    out = {t}
+    if t in _TOKEN_ALIASES:
+        out.add(_TOKEN_ALIASES[t])
+    for long, short in _TOKEN_ALIASES.items():
+        if short == t:
+            out.add(long)
+    return out
+
+
+def _log_tokens(label: str) -> list[str]:
+    """Split synthetic log labels (e.g. dissect_nas_attach_request) into tokens."""
+    raw = re.sub(r"^dissect_", "", label, flags=re.I)
+    raw = re.sub(r"^(diameter|gtpv2)_", "", raw, flags=re.I)
+    return [p for p in re.split(r"[^a-z0-9]+", raw.lower()) if len(p) > 1]
+
+
+def _path_substrings_for_label(log_label: str) -> list[str] | None:
+    """
+    If the log label maps to a protocol family, return substrings that must
+    appear in IndexedFunction.file_path for token matching. None = no filter
+    (fall back to scanning the first N functions only).
+    """
+    t = log_label.lower()
+    if "dissect_nas" in t or t.startswith("nas_"):
+        return [
+            "nas_eps",
+            "nas-5gs",
+            "nas_5gs",
+            "nas-5gs",
+            "packet-nas",
+            "packet-gsm_a",
+            "lte_rrc",
+        ]
+    if t.startswith("diameter_") or t.startswith("diameter"):
+        return ["diameter", "dcca"]
+    if "gtpv2" in t or t.startswith("gtp"):
+        return ["gtp", "packet-gtp"]
+    if "tcp_retransmission" in t:
+        return ["tcp", "reassembl"]
+    if "dns_retransmission" in t:
+        return ["dns"]
+    if "out_of_order" in t:
+        return ["tcp", "reassembl", "packet-tcp"]
+    return None
+
+
+def _file_matches_path_hint(file_path: str, substrings: list[str]) -> bool:
+    fp = file_path.lower()
+    return any(s.lower() in fp for s in substrings)
+
+
+def _token_overlap_score(log_label: str, symbol_name: str) -> float:
+    """Jaccard similarity on token sets with light alias expansion."""
+    ta: set[str] = set()
+    for t in _log_tokens(log_label):
+        ta |= _expand_token(t)
+    tb: set[str] = set()
+    for t in _log_tokens(symbol_name):
+        tb |= _expand_token(t)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    uni = len(ta | tb)
+    return inter / uni if uni else 0.0
+
+
 class AppTraceCorrelator:
     """Correlates an AppLogSession's function calls with source code."""
 
@@ -83,13 +163,14 @@ class AppTraceCorrelator:
 
         # Load code index for the session's source repo
         code_index, indexed_funcs = self._load_index(session)
+        idx_sha = code_index.commit_sha if code_index else None
         if not indexed_funcs:
             logger.info(
                 "AppTraceCorrelator: no code index for session %d "
                 "(source_repo=%s) — skipping correlation",
                 session_id, session.source_repo,
             )
-            return self._build_response(session, calls, matched=0)
+            return self._build_response(session, calls, matched=0, commit_sha=idx_sha)
 
         # Build lookup structures
         func_by_name:      dict[str, list[IndexedFunction]] = {}
@@ -146,7 +227,9 @@ class AppTraceCorrelator:
             "AppTraceCorrelator: session %d — %d/%d calls correlated",
             session_id, matched, len(calls),
         )
-        return self._build_response(session, calls, matched, correlated)
+        return self._build_response(
+            session, calls, matched, correlated, commit_sha=idx_sha
+        )
 
     # ── Private ───────────────────────────────────────────────────────────────
 
@@ -210,11 +293,12 @@ class AppTraceCorrelator:
         if norm in by_norm:
             return by_norm[norm][0], "normalised"
 
-        # 3. Fuzzy (only on first 200 functions to keep it fast)
+        # 3. Fuzzy — scan a larger prefix (order is DB-defined; cap for CPU)
         threshold = self._settings.FUZZY_MATCH_THRESHOLD
         best_score = 0.0
         best_fn: IndexedFunction | None = None
-        for fn in all_funcs[:200]:
+        fuzzy_cap = min(8000, len(all_funcs))
+        for fn in all_funcs[:fuzzy_cap]:
             score = difflib.SequenceMatcher(
                 None, norm, _normalise(fn.function_name)
             ).ratio()
@@ -223,6 +307,28 @@ class AppTraceCorrelator:
 
         if best_score >= threshold and best_fn:
             return best_fn, "fuzzy"
+
+        # 4. Token overlap (tshark / synthetic labels vs real C names)
+        best_tok = 0.0
+        best_tfn: IndexedFunction | None = None
+        path_hints = _path_substrings_for_label(target)
+        if path_hints:
+            pool = [
+                fn for fn in all_funcs
+                if _file_matches_path_hint(fn.file_path, path_hints)
+            ]
+            if not pool:
+                pool = all_funcs[: min(25_000, len(all_funcs))]
+        else:
+            pool = all_funcs[: min(25_000, len(all_funcs))]
+        pool = pool[: min(60_000, len(pool))]
+
+        for fn in pool:
+            s = _token_overlap_score(target, fn.function_name)
+            if s > best_tok:
+                best_tok, best_tfn = s, fn
+        if best_tok >= 0.52 and best_tfn:
+            return best_tfn, "token_overlap"
         return None, None
 
     def _build_call_chain(
@@ -251,6 +357,7 @@ class AppTraceCorrelator:
             total_calls=0,
             matched_calls=0,
             match_rate=0.0,
+            source_commit_sha=None,
         )
 
     def _build_response(
@@ -259,6 +366,8 @@ class AppTraceCorrelator:
         calls: list[AppFunctionCall],
         matched: int,
         correlated: list[CorrelatedCall] | None = None,
+        *,
+        commit_sha: str | None = None,
     ) -> AppTraceResponse:
         total = len(calls)
         rate = matched / total if total else 0.0
@@ -275,6 +384,7 @@ class AppTraceCorrelator:
                     source_line=c.source_line,
                     call_chain=c.call_chain,
                     log_excerpt=c.log_excerpt,
+                    match_method=c.match_method,
                 ))
         else:
             for call in calls:
@@ -283,6 +393,7 @@ class AppTraceCorrelator:
                     function_name=call.function_name,
                     duration_ms=call.duration_ms,
                     log_excerpt=call.log_excerpt,
+                    match_method=None,
                 ))
 
         return AppTraceResponse(
@@ -292,6 +403,7 @@ class AppTraceCorrelator:
             matched_calls=matched,
             match_rate=round(rate, 3),
             calls=resp_calls,
+            source_commit_sha=commit_sha,
         )
 
 
@@ -309,3 +421,31 @@ def _parse_github_url(url: str) -> str | None:
     if re.fullmatch(r"[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+", url):
         return url
     return None
+
+
+def get_index_commit_sha_for_session(db: Session, session: AppLogSession) -> str | None:
+    """Latest completed CodeIndex commit SHA for this session's source_repo."""
+    from app.models.database import TrackedRepository, CodeIndex
+
+    if not session.source_repo:
+        return None
+    repo_name = _parse_github_url(session.source_repo)
+    if not repo_name:
+        return None
+    tracked = (
+        db.query(TrackedRepository)
+        .filter(TrackedRepository.full_name == repo_name)
+        .first()
+    )
+    if not tracked:
+        return None
+    code_index = (
+        db.query(CodeIndex)
+        .filter(
+            CodeIndex.repository_id == tracked.id,
+            CodeIndex.status == "completed",
+        )
+        .order_by(CodeIndex.created_at.desc())
+        .first()
+    )
+    return code_index.commit_sha if code_index else None

@@ -2,7 +2,10 @@
 
 import json
 import os
+import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import tree_sitter
 
@@ -374,16 +377,23 @@ class ASTParser:
         ext = os.path.splitext(file_path)[1]
         lang = ext.lstrip(".")
         patterns = config["log_patterns"]
+        c_regex_mode = bool(patterns and isinstance(patterns[0], str))
 
         def _is_log_call(node) -> tuple[bool, str | None]:
             """Check if a call node matches a log pattern. Returns (is_match, level)."""
+            if c_regex_mode:
+                snippet = node.text.decode("utf-8", errors="replace")
+                for pat in patterns:
+                    if isinstance(pat, str) and re.search(pat, snippet):
+                        return True, None
+                return False, None
+
             call_name = self._get_call_name(node, source_bytes)
             if not call_name:
                 return False, None
 
             for obj, method in patterns:
                 if obj is None:
-                    # Standalone function (e.g., print)
                     if call_name == method:
                         return True, None
                 else:
@@ -526,30 +536,72 @@ class ASTParser:
 class CodeIndexer:
     """Orchestrates fetching files, parsing, and building the CodeIndex."""
 
-    def __init__(self, github_client, parser: ASTParser | None = None):
+    def __init__(self, github_client=None, parser: ASTParser | None = None):
         self.github = github_client
         self.parser = parser or ASTParser()
         self._settings = get_settings()
 
-    def build_index(self, repo_full_name: str, commit_sha: str) -> CodeIndexData:
-        """Build a complete code index for a repository at a given commit."""
-        logger.info("Building code index for %s @ %s", repo_full_name, commit_sha[:8])
+    def _list_local_source_files(self, local_root: str) -> list[dict]:
+        """Paths relative to repo root (posix-style), with size in bytes."""
+        max_bytes = self._settings.AST_INDEX_MAX_FILE_SIZE_KB * 1024
+        base = Path(local_root).resolve()
+        out: list[dict] = []
+        for dirpath, dirnames, filenames in os.walk(local_root):
+            dirnames[:] = [d for d in dirnames if d != ".git"]
+            for fn in filenames:
+                ext = os.path.splitext(fn)[1]
+                if ext not in ASTParser.SUPPORTED_EXTENSIONS:
+                    continue
+                full = Path(dirpath) / fn
+                try:
+                    st = full.stat()
+                except OSError:
+                    continue
+                if st.st_size > max_bytes:
+                    continue
+                try:
+                    rel = full.resolve().relative_to(base)
+                except ValueError:
+                    continue
+                out.append({"path": rel.as_posix(), "size": st.st_size})
+        out.sort(key=lambda x: x["path"])
+        return out
 
-        # 1. Fetch file tree
-        try:
-            tree = self.github.list_tree(repo_full_name, commit_sha)
-        except Exception as e:
-            raise IndexingError(
-                f"Failed to fetch file tree for {repo_full_name}",
-                detail=str(e),
-            ) from e
-
-        # 2. Filter to supported extensions and apply limits
-        source_files = [
-            f for f in tree
-            if os.path.splitext(f["path"])[1] in ASTParser.SUPPORTED_EXTENSIONS
-            and (f.get("size") or 0) <= self._settings.AST_INDEX_MAX_FILE_SIZE_KB * 1024
-        ]
+    def build_index(
+        self,
+        repo_full_name: str,
+        commit_sha: str,
+        *,
+        local_root: str | None = None,
+    ) -> CodeIndexData:
+        """Build a complete code index from GitHub blobs or a local clone."""
+        sha_short = commit_sha[:8] if commit_sha else "?"
+        if local_root:
+            logger.info(
+                "Building code index from local tree %s for %s @ %s",
+                local_root, repo_full_name, sha_short,
+            )
+            source_files = self._list_local_source_files(local_root)
+        else:
+            if not self.github:
+                raise IndexingError(
+                    "GitHub client is required when not using local_root",
+                    detail=None,
+                )
+            logger.info("Building code index for %s @ %s", repo_full_name, sha_short)
+            try:
+                tree = self.github.list_tree(repo_full_name, commit_sha)
+            except Exception as e:
+                raise IndexingError(
+                    f"Failed to fetch file tree for {repo_full_name}",
+                    detail=str(e),
+                ) from e
+            source_files = [
+                f for f in tree
+                if os.path.splitext(f["path"])[1] in ASTParser.SUPPORTED_EXTENSIONS
+                and (f.get("size") or 0)
+                <= self._settings.AST_INDEX_MAX_FILE_SIZE_KB * 1024
+            ]
 
         if len(source_files) > self._settings.AST_INDEX_MAX_FILES:
             logger.warning(
@@ -558,37 +610,60 @@ class CodeIndexer:
             )
             source_files = source_files[: self._settings.AST_INDEX_MAX_FILES]
 
-        # 3. Parse each file
         all_functions: list[FunctionInfo] = []
         all_log_calls: list[LogCallInfo] = []
         language_counts: dict[str, int] = {}
         errors = 0
+        base_path = Path(local_root).resolve() if local_root else None
 
-        for file_info in source_files:
-            path = file_info["path"]
-            ext = os.path.splitext(path)[1]
-            lang = ext.lstrip(".")
+        _prev_recursion = sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(max(_prev_recursion, 25_000))
+            for file_info in source_files:
+                path = file_info["path"]
+                ext = os.path.splitext(path)[1]
+                lang = ext.lstrip(".")
 
-            try:
-                content = self.github.get_file_contents(
-                    repo_full_name, path, ref=commit_sha
-                )
-            except Exception as e:
-                logger.warning("Failed to fetch %s: %s", path, e)
-                errors += 1
-                continue
+                try:
+                    if local_root and base_path is not None:
+                        full_file = (base_path / path).resolve()
+                        try:
+                            full_file.relative_to(base_path)
+                        except ValueError:
+                            logger.warning("Skipping path outside clone root: %s", path)
+                            errors += 1
+                            continue
+                        with open(
+                            full_file, "r", encoding="utf-8", errors="replace"
+                        ) as fh:
+                            content = fh.read()
+                    else:
+                        content = self.github.get_file_contents(
+                            repo_full_name, path, ref=commit_sha
+                        )
+                except Exception as e:
+                    logger.warning("Failed to read %s: %s", path, e)
+                    errors += 1
+                    continue
 
-            try:
-                functions, log_calls = self.parser.parse_file(content, path)
-                all_functions.extend(functions)
-                all_log_calls.extend(log_calls)
-                language_counts[lang] = language_counts.get(lang, 0) + 1
-            except ASTParseError as e:
-                logger.warning("Failed to parse %s: %s", path, e.message)
-                errors += 1
-                continue
+                try:
+                    functions, log_calls = self.parser.parse_file(content, path)
+                    all_functions.extend(functions)
+                    all_log_calls.extend(log_calls)
+                    language_counts[lang] = language_counts.get(lang, 0) + 1
+                except RecursionError:
+                    logger.warning(
+                        "Recursion depth exceeded parsing %s — skipping file", path
+                    )
+                    errors += 1
+                    continue
+                except ASTParseError as e:
+                    logger.warning("Failed to parse %s: %s", path, e.message)
+                    errors += 1
+                    continue
+        finally:
+            sys.setrecursionlimit(_prev_recursion)
 
-        # 4. Build graphs
         call_graph = self._build_call_graph(all_functions)
         reverse_graph = self._build_reverse_graph(call_graph)
         log_line_map = self._build_log_line_map(all_log_calls, all_functions)

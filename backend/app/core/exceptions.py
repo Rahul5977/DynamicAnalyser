@@ -58,6 +58,10 @@ class IndexingError(DynamicAnalyserError):
     """Raised when code indexing fails."""
 
 
+class LocalRepoPathError(DynamicAnalyserError):
+    """Raised when a local repository path is missing, unsafe, or not allowed."""
+
+
 class CorrelationError(DynamicAnalyserError):
     """Raised when trace correlation encounters an unrecoverable error."""
 
@@ -89,6 +93,7 @@ def to_http_exception(error: DynamicAnalyserError) -> HTTPException:
         RunNotFoundError: status.HTTP_404_NOT_FOUND,
         ASTParseError: status.HTTP_422_UNPROCESSABLE_ENTITY,
         IndexingError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+        LocalRepoPathError: status.HTTP_400_BAD_REQUEST,
         CorrelationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
         AnalysisError: status.HTTP_500_INTERNAL_SERVER_ERROR,
         LLMError: status.HTTP_502_BAD_GATEWAY,

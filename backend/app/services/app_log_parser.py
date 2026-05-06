@@ -188,7 +188,18 @@ class FormatDetector:
         }
         best = max(scores, key=scores.get)
         conf = scores[best]
-        return (best, conf) if conf > 0.3 else ("unknown", conf)
+
+        if conf > 0.3:
+            return best, conf
+
+        # Weak signals (common for Wireshark/tshark logs with long headers): still suggest a format
+        if conf >= 0.06:
+            return best, max(conf, 0.12)
+
+        # Nothing matched strongly — use heuristic (generic "took 12ms", "elapsed 3s", …) instead of "unknown"
+        if not any(scores.values()):
+            return "heuristic", 0.25
+        return "heuristic", max(conf, 0.18)
 
     # ── individual scorers ────────────────────────────────────────────────────
 
@@ -212,12 +223,22 @@ class FormatDetector:
         return hits / max(len(sample[:40]), 1)
 
     def _score_tshark(self, sample: list[str]) -> float:
-        hits = sum(
-            2 if re.search(r"Frame\s+\d+:|dissect_\w+", l) else
-            1 if re.search(r"\belapsed\s*=\s*[\d.]", l) else 0
-            for l in sample[:60]
-        )
-        return min(hits / max(len(sample[:60]), 1) * 3, 1.0)
+        """Boost Wireshark / tshark text: dissect_*, Frame N:, elapsed=, tab fields."""
+        slice_ = sample[:120]
+        hits = 0
+        for l in slice_:
+            if re.search(r"Frame\s+\d+:|dissect_\w+", l):
+                hits += 2
+            elif re.search(r"\belapsed\s*=\s*[\d.]", l):
+                hits += 1
+            elif re.search(r"\bdissect_[a-z0-9_]+", l, re.I):
+                hits += 1
+            elif re.search(r"\btshark\b|\bwireshark\b", l, re.I):
+                hits += 0.5
+            elif re.search(r"\b(packet|proto_tree|proto[-_]tree)\b", l, re.I):
+                hits += 0.35
+        denom = max(min(len(slice_), 45), 1)
+        return min(hits / denom * 2.8, 1.0)
 
     def _score_syslog(self, sample: list[str]) -> float:
         hits = sum(1 for l in sample[:30] if _SYSLOG_TS_RE.match(l))

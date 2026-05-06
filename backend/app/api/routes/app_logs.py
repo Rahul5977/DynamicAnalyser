@@ -251,6 +251,8 @@ def get_app_session(session_id: int, db: Session = Depends(get_db)):
         .all()
     )
 
+    from app.services.app_trace_correlator import get_index_commit_sha_for_session
+
     return AppLogSessionDetail(
         id=session.id,
         app_name=session.app_name,
@@ -262,6 +264,7 @@ def get_app_session(session_id: int, db: Session = Depends(get_db)):
         error_message=session.error_message,
         ai_analysis=session.ai_analysis,
         created_at=session.created_at,
+        source_commit_sha=get_index_commit_sha_for_session(db, session),
         function_calls=[
             AppFunctionCallResponse(
                 id=c.id,
@@ -294,10 +297,11 @@ def index_source_for_session(
     """
     Trigger AST indexing for this session's source repository.
 
-    Body (optional): `{"github_url": "https://github.com/owner/repo"}`
-
-    If `github_url` is provided it overrides the one stored on the session.
-    Reuses the existing CodeIndexer — just points it at a TrackedRepository.
+    Body (optional JSON):
+    - `github_url`: overrides the session's `source_repo`
+    - `local_repo_path`: absolute path to a local git clone (fast; no per-file API).
+      Requires `AST_INDEX_LOCAL_ROOT` in server env; path must resolve under it.
+    - `commit_sha`: optional; for local clones defaults to `git rev-parse HEAD`
     """
     session = db.get(AppLogSession, session_id)
     if not session:
@@ -336,13 +340,24 @@ def index_source_for_session(
     try:
         owner, name = repo_name.split("/", 1)
         from app.api.routes.analysis import index_repo as index_repo_for_tracked_repo
-        result = index_repo_for_tracked_repo(owner=owner, name=name, request=None, db=db)
+        from app.models.schemas import IndexRepoRequest
+
+        idx_req = IndexRepoRequest(
+            commit_sha=(payload.get("commit_sha") or None),
+            local_repo_path=(payload.get("local_repo_path") or None),
+        )
+        result = index_repo_for_tracked_repo(
+            owner=owner, name=name, request=idx_req, db=db
+        )
         return {
             "status": "completed",
             "repo": repo_name,
             "commit_sha": result.commit_sha,
             "total_functions": result.total_functions,
+            "indexed_from_local": bool(idx_req.local_repo_path and idx_req.local_repo_path.strip()),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Source indexing failed for session %d: %s", session_id, e)
         raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")

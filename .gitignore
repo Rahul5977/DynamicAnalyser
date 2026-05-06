@@ -189,4 +189,9 @@ thumb
 sketch
 .DS_Store
 
+# DynamicAnalyser — runtime state & user uploads (do not commit)
+.backend.pid
+.frontend.pid
+backend/uploads/
+
 # End of https://www.toptal.com/developers/gitignore/api/react,python

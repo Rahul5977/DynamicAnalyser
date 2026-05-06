@@ -46,21 +46,29 @@ def index_repo(
         repo_store = TrackedRepoRepository(db)
         tracked_repo = repo_store.get_by_full_name(full_name)
 
-        github = GitHubClient()
+        local_resolved: str | None = None
+        local_raw = (request.local_repo_path or "").strip() if request else ""
+        use_local = bool(local_raw)
+        if use_local:
+            from app.core.local_repo import git_head_sha, resolve_local_repo_path
 
-        # Determine commit SHA
-        commit_sha = request.commit_sha if request and request.commit_sha else None
-        if not commit_sha:
-            # Get HEAD SHA from latest workflow run or repo default branch
-            runs = github.get_workflow_runs(full_name, limit=1)
-            if runs:
-                commit_sha = runs[0].head_sha
-            else:
-                # Fetch default branch HEAD
-                repo_obj = github._get_repo(full_name)
-                commit_sha = repo_obj.get_branch(
-                    tracked_repo.default_branch
-                ).commit.sha
+            local_resolved = resolve_local_repo_path(local_raw)
+            commit_sha = (
+                (request.commit_sha or "").strip() or git_head_sha(local_resolved)
+            )
+            github = None
+        else:
+            github = GitHubClient()
+            commit_sha = request.commit_sha if request and request.commit_sha else None
+            if not commit_sha:
+                runs = github.get_workflow_runs(full_name, limit=1)
+                if runs:
+                    commit_sha = runs[0].head_sha
+                else:
+                    repo_obj = github._get_repo(full_name)
+                    commit_sha = repo_obj.get_branch(
+                        tracked_repo.default_branch
+                    ).commit.sha
 
         # Check if already indexed
         idx_store = CodeIndexRepository(db)
@@ -107,7 +115,9 @@ def index_repo(
         # Build the index
         try:
             indexer = CodeIndexer(github)
-            index_data = indexer.build_index(full_name, commit_sha)
+            index_data = indexer.build_index(
+                full_name, commit_sha, local_root=local_resolved
+            )
 
             # Persist functions and log calls
             db_functions = [

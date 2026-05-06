@@ -94,7 +94,13 @@ class ErrorResponse(BaseModel):
 class IndexRepoRequest(BaseModel):
     commit_sha: str | None = Field(
         None,
-        description="Commit SHA to index. Defaults to HEAD of default branch.",
+        description="Commit SHA to index. For GitHub: default branch HEAD. "
+        "For local: `git rev-parse HEAD` in local_repo_path.",
+    )
+    local_repo_path: str | None = Field(
+        None,
+        description="Absolute path to a local git clone (reads from disk). "
+        "Requires AST_INDEX_LOCAL_ROOT; path must resolve under it.",
     )
 
 
@@ -330,6 +336,10 @@ class AppLogSessionResponse(BaseModel):
 class AppLogSessionDetail(AppLogSessionResponse):
     error_message: str | None = None
     ai_analysis: str | None = None
+    source_commit_sha: str | None = Field(
+        default=None,
+        description="SHA of the CodeIndex used for GitHub source links.",
+    )
     function_calls: list[AppFunctionCallResponse] = []
 
 
@@ -374,6 +384,7 @@ class CorrelatedCallResponse(BaseModel):
     source_line:     int | None = None
     call_chain:      list[dict] = []
     log_excerpt:     str | None = None
+    match_method:    str | None = None
 
 
 class AppTraceResponse(BaseModel):
@@ -383,6 +394,7 @@ class AppTraceResponse(BaseModel):
     matched_calls:  int
     match_rate:     float
     calls:          list[CorrelatedCallResponse] = []
+    source_commit_sha: str | None = None
 
 
 # ── Static analysis (multi-domain AST + Claude) ───────────────────────────────
