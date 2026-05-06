@@ -19,14 +19,34 @@ kill_port() {
   fi
 }
 
+# Pydantic (and many deps) ship wheels up to 3.13. On 3.14 pip may try to build
+# pydantic-core from source (Rust + network); prefer 3.12/3.13/3.11 instead.
 choose_python() {
-  if command -v python3.12 >/dev/null 2>&1; then
-    echo "python3.12"
-  elif command -v python3 >/dev/null 2>&1; then
-    echo "python3"
-  else
-    echo ""
+  local cand
+  for cand in python3.12 python3.13 python3.11 python3.10; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      echo "$cand"
+      return
+    fi
+  done
+  if command -v python3 >/dev/null 2>&1; then
+    local major minor
+    major=$(python3 -c 'import sys; print(sys.version_info.major)')
+    minor=$(python3 -c 'import sys; print(sys.version_info.minor)')
+    if [[ "$major" -eq 3 ]] && [[ "$minor" -lt 14 ]]; then
+      echo "python3"
+      return
+    fi
   fi
+  echo ""
+}
+
+venv_python_too_new() {
+  [[ -x "$VENV_DIR/bin/python" ]] || return 1
+  if ! "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info < (3, 14) else 1)'; then
+    return 0
+  fi
+  return 1
 }
 
 mkdir -p "$LOG_DIR"
@@ -38,10 +58,17 @@ fi
 
 kill_port "$PORT"
 
+if venv_python_too_new; then
+  echo "Removing backend/.venv: Python 3.14+ often has no binary wheels for pydantic-core (install fails without Rust)."
+  echo "Install a supported runtime, e.g.: brew install python@3.12"
+  rm -rf "$VENV_DIR"
+fi
+
 if [[ ! -d "$VENV_DIR" ]]; then
   PYTHON_BIN="$(choose_python)"
   if [[ -z "$PYTHON_BIN" ]]; then
-    echo "No Python 3 executable found (python3.12/python3)."
+    echo "No supported Python found (need 3.10–3.13). If \`python3\` is 3.14, install:"
+    echo "  brew install python@3.12"
     exit 1
   fi
 
@@ -57,7 +84,7 @@ echo "Ensuring backend dependencies are installed..."
   cd "$BACKEND_DIR"
   source .venv/bin/activate
   pip install -r requirements.txt python-multipart
-) >/dev/null
+)
 
 echo "Starting backend on port $PORT..."
 (

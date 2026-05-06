@@ -10,7 +10,7 @@ from app.core.exceptions import DynamicAnalyserError, to_http_exception
 from app.core.logging import logger
 from app.models.database import Base
 from app.db.session import engine
-from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard, chat, benchmarks
+from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard, chat, benchmarks, static_analysis
 from app.api.routes import app_logs
 
 
@@ -97,4 +97,4 @@ app.include_router(ai_analysis.router, prefix="/api", tags=["ai-analysis"])
 app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(app_logs.router, prefix="/api", tags=["app-logs"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
-app.include_router(benchmarks.router, prefix="/api", tags=["benchmarks"])
+app.include_router(static_analysis.router, prefix="/api")

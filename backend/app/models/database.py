@@ -405,6 +405,36 @@ class PatternConfidence(Base):
     )
 
 
+class StaticAnalysisReport(Base):
+    """Chunked static analysis (AST + Claude) for a GitHub repo at a commit."""
+
+    __tablename__ = "static_analysis_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    github_full_name = Column(String(255), nullable=False, index=True)
+    tracked_repository_id = Column(
+        Integer, ForeignKey("tracked_repositories.id"), nullable=True
+    )
+    commit_sha = Column(String(64), nullable=False)
+    status = Column(String(32), default="pending", nullable=False)
+    summary_markdown = Column(Text, nullable=True)
+    domains_json = Column(Text, nullable=True)  # per-domain stats + LLM usage
+    findings_json = Column(Text, nullable=True)  # unified list of issues
+    error_message = Column(Text, nullable=True)
+    llm_model = Column(String(128), nullable=True)
+    llm_prompt_tokens = Column(Integer, nullable=True)
+    llm_completion_tokens = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    tracked_repository = relationship("TrackedRepository")
+
+    __table_args__ = (Index("ix_static_analysis_repo_sha", "github_full_name", "commit_sha"),)
+
+    def __repr__(self) -> str:
+        return f"<StaticAnalysisReport {self.github_full_name}@{self.commit_sha[:8]} ({self.status})>"
+
+
 class RegressionAlert(Base):
     __tablename__ = "regression_alerts"
 

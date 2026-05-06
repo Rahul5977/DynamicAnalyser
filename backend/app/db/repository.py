@@ -21,6 +21,7 @@ from app.models.database import (
     AnalysisSuggestion,
     AnalysisFeedback,
     AppLogSession,
+    StaticAnalysisReport,
 )
 
 
@@ -567,3 +568,83 @@ class AnalysisRepository:
             }
             for r in rows
         ]
+
+
+class StaticAnalysisRepository:
+    """CRUD for chunked static analysis reports."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create_pending(
+        self,
+        github_full_name: str,
+        commit_sha: str,
+        tracked_repository_id: int | None,
+    ) -> StaticAnalysisReport:
+        row = StaticAnalysisReport(
+            github_full_name=github_full_name,
+            tracked_repository_id=tracked_repository_id,
+            commit_sha=commit_sha,
+            status="pending",
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def get_by_id(self, report_id: int) -> StaticAnalysisReport:
+        row = self.db.get(StaticAnalysisReport, report_id)
+        if not row:
+            raise DatabaseError(
+                f"Static analysis report {report_id} not found",
+                detail="Invalid id",
+            )
+        return row
+
+    def list_recent(self, limit: int = 30) -> list[StaticAnalysisReport]:
+        return (
+            self.db.query(StaticAnalysisReport)
+            .order_by(desc(StaticAnalysisReport.created_at))
+            .limit(limit)
+            .all()
+        )
+
+    def update_running(self, report_id: int) -> None:
+        row = self.get_by_id(report_id)
+        row.status = "running"
+        self.db.commit()
+
+    def update_completed(
+        self,
+        report_id: int,
+        *,
+        summary_markdown: str | None,
+        domains_json: str | None,
+        findings_json: str | None,
+        llm_model: str | None,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+    ) -> None:
+        import datetime
+
+        row = self.get_by_id(report_id)
+        row.status = "completed"
+        row.summary_markdown = summary_markdown
+        row.domains_json = domains_json
+        row.findings_json = findings_json
+        row.llm_model = llm_model
+        row.llm_prompt_tokens = prompt_tokens
+        row.llm_completion_tokens = completion_tokens
+        row.completed_at = datetime.datetime.utcnow()
+        row.error_message = None
+        self.db.commit()
+
+    def update_failed(self, report_id: int, message: str) -> None:
+        import datetime
+
+        row = self.get_by_id(report_id)
+        row.status = "failed"
+        row.error_message = message[:8000]
+        row.completed_at = datetime.datetime.utcnow()
+        self.db.commit()

@@ -383,3 +383,73 @@ class AppTraceResponse(BaseModel):
     matched_calls:  int
     match_rate:     float
     calls:          list[CorrelatedCallResponse] = []
+
+
+# ── Static analysis (multi-domain AST + Claude) ───────────────────────────────
+
+class StaticAnalysisStartRequest(BaseModel):
+    """Start analysis using either `github_url` or `full_name` (owner/repo)."""
+
+    github_url: str | None = Field(
+        default=None,
+        description="https://github.com/owner/repo or git@github.com:owner/repo.git",
+    )
+    full_name: str | None = Field(
+        default=None,
+        description="owner/repo",
+    )
+    commit_sha: str | None = Field(
+        default=None,
+        description="Optional commit SHA; default = HEAD of default branch",
+    )
+
+
+class StaticAnalysisFindingItem(BaseModel):
+    domain: str
+    severity: str
+    title: str
+    file_path: str = ""
+    line_start: int = 0
+    line_end: int = 0
+    before_code: str = ""
+    after_code: str = ""
+    explanation: str = ""
+    source: str = "llm"  # llm | ast_db_layer1 | ast_signal
+
+
+class StaticDomainChunk(BaseModel):
+    name: str
+    file_count: int
+    files_sample: list[str] = []
+    llm_issues_count: int = 0
+
+
+class StaticAnalysisReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    github_full_name: str
+    commit_sha: str
+    status: str
+    summary_markdown: str | None = None
+    domains: list[StaticDomainChunk] = []
+    findings: list[StaticAnalysisFindingItem] = []
+    llm_model: str | None = None
+    llm_prompt_tokens: int | None = None
+    llm_completion_tokens: int | None = None
+    error_message: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class StaticAnalysisReportSummary(BaseModel):
+    """Lightweight row for history lists."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    github_full_name: str
+    commit_sha: str
+    status: str
+    created_at: datetime
+    completed_at: datetime | None = None

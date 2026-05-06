@@ -120,6 +120,20 @@ export const getAppSessionAnalysis = (id) =>
 export const listAppSessionAnalyses = (id) =>
   request(`/app-logs/sessions/${id}/analyses`);
 
+// ── Static analysis (multi-domain AST + Claude) ───────────────────────────────
+
+export const startStaticAnalysis = (payload) =>
+  request("/static-analysis/start", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const listStaticReports = (limit = 30) =>
+  request(`/static-analysis/reports?limit=${limit}`);
+
+export const getStaticReport = (reportId) =>
+  request(`/static-analysis/reports/${reportId}`);
+
 export const getDebtTrend = (sessionId) =>
   request(`/app-logs/sessions/${sessionId}/debt-trend`);
 

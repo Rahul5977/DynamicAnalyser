@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     APP_LOG_UPLOAD_DIR: str = "./uploads/app_logs"
     APP_LOG_MAX_SIZE_MB: int = 50
 
+    STATIC_ANALYSIS_MAX_REPO_FILES: int = 800
+    STATIC_ANALYSIS_MAX_FILES_PER_DOMAIN: int = 45
+    STATIC_ANALYSIS_MAX_CHARS_PER_FILE: int = 14_000
+    STATIC_ANALYSIS_LLM_MAX_TOKENS: int = 8192
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
