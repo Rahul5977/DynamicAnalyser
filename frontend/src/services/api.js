@@ -33,6 +33,20 @@ export const getRunTrace = (runId) => request(`/runs/${runId}/trace`);
 export const getLatestAnalysis = (runId) =>
   request(`/runs/${runId}/analysis/latest`);
 
+export const listRunAnalyses = (runId) => request(`/runs/${runId}/analyses`);
+
+export const getAnalysisById = (analysisId) => request(`/analyses/${analysisId}`);
+
+export async function deleteAnalysis(analysisId) {
+  const res = await fetch(`${BASE}/analyses/${analysisId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(
+      typeof err.detail === "string" ? err.detail : err.error || res.statusText
+    );
+  }
+}
+
 // Analysis
 export const analyseRun = (runId, force = false) =>
   request(`/runs/${runId}/analyse`, {
@@ -103,6 +117,9 @@ export const analyseAppSession = (id, force = false, targetFunctions = null) =>
 export const getAppSessionAnalysis = (id) =>
   request(`/app-logs/sessions/${id}/analysis`);
 
+export const listAppSessionAnalyses = (id) =>
+  request(`/app-logs/sessions/${id}/analyses`);
+
 export const getDebtTrend = (sessionId) =>
   request(`/app-logs/sessions/${sessionId}/debt-trend`);
 
@@ -141,31 +158,3 @@ export const getAppBenchmark = (appName) =>
   request(`/benchmarks/app-sessions?app_name=${encodeURIComponent(appName)}`);
 
 export const getFleetSummary = () => request("/benchmarks/fleet-summary");
-
-export async function triggerStaticAnalysis(repoUrl) {
-  const r = await fetch(`${BASE}/static/analyse`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo_url: repoUrl }),
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-export async function getStaticJob(jobId) {
-  const r = await fetch(`${BASE}/static/jobs/${jobId}`);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-export async function getStaticReport(jobId) {
-  const r = await fetch(`${BASE}/static/report/${jobId}`);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-export async function listStaticJobs() {
-  const r = await fetch(`${BASE}/static/jobs`);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}

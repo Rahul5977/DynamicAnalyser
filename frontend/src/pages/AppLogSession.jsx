@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getAppSession,
@@ -14,6 +14,9 @@ import {
   submitAppFeedback,
   sendChatMessage,
   getChatHistory,
+  listAppSessionAnalyses,
+  getAnalysisById,
+  deleteAnalysis,
 } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
@@ -22,6 +25,16 @@ import { EffortBadge } from "../components/StatusBadge";
 function formatMs(ms) {
   if (ms === null || ms === undefined) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+}
+
+function formatSessionDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function pct(part, total) {
@@ -919,9 +932,24 @@ function AIAnalysisPanel({
   const [analysing, setAnalysing]   = useState(false);
   const [polling, setPolling]       = useState(false);
   const [error, setError]           = useState(null);
+  const [reports, setReports]     = useState([]);
+  const [deletingId, setDeletingId] = useState(null);
   const [feedbackSent, setFeedbackSent] = useState({});
   const [patternRows, setPatternRows] = useState([]);
   const pollRef = useRef(null);
+
+  const loadReports = useCallback(async () => {
+    try {
+      const rows = await listAppSessionAnalyses(sessionId);
+      setReports(rows);
+    } catch {
+      setReports([]);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
 
   // Reset panel whenever the target function selection changes
   useEffect(() => {
@@ -940,6 +968,7 @@ function AIAnalysisPanel({
           setPolling(false);
           setAnalysing(false);
           setAnalysis(a);
+          loadReports();
         }
       } catch (_) {}
     }, 2000);
@@ -952,6 +981,7 @@ function AIAnalysisPanel({
       if (result.status === "completed") {
         setAnalysis(result);
         setAnalysing(false);
+        loadReports();
       } else {
         startPolling();
       }
@@ -968,6 +998,39 @@ function AIAnalysisPanel({
       await loadPatternConfidence();
     } catch (e) {
       setError(e.message || "Feedback failed");
+    }
+  };
+
+  const handleDeleteReport = async (analysisId) => {
+    if (!window.confirm("Delete this analysis report permanently? This cannot be undone.")) {
+      return;
+    }
+    setDeletingId(analysisId);
+    setError(null);
+    try {
+      await deleteAnalysis(analysisId);
+      await loadReports();
+      if (analysis?.id === analysisId) {
+        const rows = await listAppSessionAnalyses(sessionId).catch(() => []);
+        const next = rows.find((x) => x.status === "completed") || rows[0];
+        if (next) {
+          setAnalysis(await getAnalysisById(next.id));
+        } else {
+          setAnalysis(null);
+        }
+      }
+    } catch (e) {
+      setError(e.message || "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleLoadReport = async (analysisId) => {
+    try {
+      setAnalysis(await getAnalysisById(analysisId));
+    } catch (e) {
+      setError(e.message || "Could not load report");
     }
   };
 
@@ -1039,6 +1102,54 @@ function AIAnalysisPanel({
           </button>
         </div>
       </div>
+
+      {reports.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+            Saved analysis reports ({reports.length})
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Created</th>
+                  <th>Status</th>
+                  <th>Model</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map((row) => (
+                  <tr key={row.id}>
+                    <td style={{ fontSize: 13 }}>{formatSessionDate(row.created_at)}</td>
+                    <td><StatusBadge status={row.status} /></td>
+                    <td style={{ fontSize: 13, color: "var(--text-muted)" }}>{row.llm_model || "—"}</td>
+                    <td>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleLoadReport(row.id)}
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          disabled={deletingId === row.id}
+                          onClick={() => handleDeleteReport(row.id)}
+                        >
+                          {deletingId === row.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {error && <div className="error-msg" style={{ marginTop: 12 }}>{error}</div>}
 

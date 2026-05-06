@@ -392,6 +392,36 @@ class AnalysisRepository:
             .all()
         )
 
+    def list_for_pipeline_run(self, run_id: int) -> list[Analysis]:
+        return (
+            self.db.query(Analysis)
+            .filter(Analysis.pipeline_run_id == run_id)
+            .order_by(desc(Analysis.created_at))
+            .all()
+        )
+
+    def list_for_app_session(self, session_id: int) -> list[Analysis]:
+        return (
+            self.db.query(Analysis)
+            .filter(Analysis.app_log_session_id == session_id)
+            .order_by(desc(Analysis.created_at))
+            .all()
+        )
+
+    def delete_by_id(self, analysis_id: int) -> None:
+        analysis = self.db.get(Analysis, analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundError(
+                f"Analysis with id={analysis_id} not found"
+            )
+        try:
+            self.db.delete(analysis)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to delete analysis: %s", e)
+            raise DatabaseError("Failed to delete analysis", detail=str(e)) from e
+
     def create(self, analysis: Analysis) -> Analysis:
         try:
             self.db.add(analysis)

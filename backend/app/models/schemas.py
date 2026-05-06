@@ -245,6 +245,20 @@ class AnalysisSummary(BaseModel):
     created_at: datetime
 
 
+class AnalysisListItem(BaseModel):
+    """Lightweight row for listing past analysis reports (CI/CD or app logs)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    pipeline_run_id: int | None = None
+    app_log_session_id: int | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+    llm_model: str | None = None
+
+
 class AntiPatternInsight(BaseModel):
     anti_pattern: str
     occurrence_count: int

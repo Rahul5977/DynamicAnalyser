@@ -16,7 +16,6 @@ import {
   getActiveRegressions,
   getDashboardSummary,
   listRepos,
-  listStaticJobs,
 } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
@@ -56,7 +55,6 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [repos, setRepos] = useState([]);
   const [regressionCount, setRegressionCount] = useState(0);
-  const [staticFindingSum, setStaticFindingSum] = useState(0);
   const [health, setHealth] = useState({ api: false, database: false, github: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,11 +65,10 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       try {
-        const [s, r, regressions, jobs, hRes, ghRes] = await Promise.all([
+        const [s, r, regressions, hRes, ghRes] = await Promise.all([
           getDashboardSummary().catch(() => null),
           listRepos().catch(() => []),
           getActiveRegressions().catch(() => []),
-          listStaticJobs().catch(() => []),
           fetch("/api/health").catch(() => null),
           fetch("/api/repos").catch(() => null),
         ]);
@@ -79,8 +76,6 @@ export default function Dashboard() {
         setSummary(s);
         setRepos(r || []);
         setRegressionCount((regressions || []).length);
-        const completedJobs = (jobs || []).filter((j) => j.status === "completed");
-        setStaticFindingSum(completedJobs.reduce((acc, j) => acc + (j.finding_count || 0), 0));
         let apiOk = false;
         let dbOk = false;
         if (hRes && hRes.ok) {
@@ -106,10 +101,7 @@ export default function Dashboard() {
   }, []);
 
   const recentRuns = (summary?.recent_runs || []).slice(0, 8);
-  const heroFindings = Math.max(
-    0,
-    (summary?.total_analyses || 0) - regressionCount + Math.floor(staticFindingSum / 4)
-  );
+  const heroFindings = Math.max(0, (summary?.total_analyses || 0) - regressionCount);
 
   if (loading) {
     return (

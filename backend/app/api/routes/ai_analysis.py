@@ -2,15 +2,16 @@
 
 import json
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Response
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AnalysisNotFoundError, DynamicAnalyserError, to_http_exception
-from app.db.repository import AnalysisRepository, TrackedRepoRepository
+from app.db.repository import AnalysisRepository, PipelineRunRepository, TrackedRepoRepository
 from app.db.session import get_db
 from app.models.database import AnalysisFeedback
 from app.models.schemas import (
     AnalyseRunRequest,
+    AnalysisListItem,
     AnalysisResponse,
     AntiPatternInsight,
     FeedbackResponse,
@@ -53,8 +54,8 @@ def _analysis_to_response(analysis) -> AnalysisResponse:
 
     return AnalysisResponse(
         id=analysis.id,
-        pipeline_run_id=analysis.pipeline_run_id,
-        repository_id=analysis.repository_id,
+        pipeline_run_id=analysis.pipeline_run_id or 0,
+        repository_id=analysis.repository_id or 0,
         status=analysis.status,
         root_cause=analysis.root_cause,
         primary_bottleneck=analysis.primary_bottleneck,
@@ -88,6 +89,38 @@ def analyse_run(
         analysis = recommender.enrich_analysis(analysis)
 
         return _analysis_to_response(analysis)
+    except DynamicAnalyserError as e:
+        raise to_http_exception(e) from e
+
+
+@router.get(
+    "/runs/{run_id}/analyses",
+    response_model=list[AnalysisListItem],
+)
+def list_run_analyses(
+    run_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """All AI analysis reports stored for this pipeline run (newest first)."""
+    try:
+        run_store = PipelineRunRepository(db)
+        run_store.get_by_id(run_id)
+        store = AnalysisRepository(db)
+        return store.list_for_pipeline_run(run_id)
+    except DynamicAnalyserError as e:
+        raise to_http_exception(e) from e
+
+
+@router.delete("/analyses/{analysis_id}", status_code=204)
+def delete_analysis(
+    analysis_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete an analysis report and its suggestions/feedback."""
+    try:
+        store = AnalysisRepository(db)
+        store.delete_by_id(analysis_id)
+        return Response(status_code=204)
     except DynamicAnalyserError as e:
         raise to_http_exception(e) from e
 

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.logging import logger
 from app.db.session import get_db
+from app.db.repository import AnalysisRepository
 from app.models.database import (
     AppFunctionCall,
     AppLogSession,
@@ -38,6 +39,7 @@ from app.models.database import (
     RegressionAlert,
 )
 from app.models.schemas import (
+    AnalysisListItem,
     AnalysisResponse,
     AppFunctionCallResponse,
     AppLogSessionDetail,
@@ -486,6 +488,19 @@ def get_app_session_analysis(session_id: int, db: Session = Depends(get_db)):
             detail=f"No analysis found for session {session_id}. Run POST /analyse first.",
         )
     return _analysis_to_response(analysis)
+
+
+@router.get(
+    "/app-logs/sessions/{session_id}/analyses",
+    response_model=list[AnalysisListItem],
+)
+def list_app_session_analyses(session_id: int, db: Session = Depends(get_db)):
+    """All AI analysis reports for this log session (newest first)."""
+    session = db.get(AppLogSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    store = AnalysisRepository(db)
+    return store.list_for_app_session(session_id)
 
 
 @router.post("/app-logs/sessions/{session_id}/feedback")

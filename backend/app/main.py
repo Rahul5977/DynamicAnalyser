@@ -10,7 +10,7 @@ from app.core.exceptions import DynamicAnalyserError, to_http_exception
 from app.core.logging import logger
 from app.models.database import Base
 from app.db.session import engine
-from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard, chat, benchmarks, static_analysis
+from app.api.routes import health, repos, runs, analysis, ai_analysis, dashboard, chat, benchmarks
 from app.api.routes import app_logs
 
 
@@ -43,41 +43,11 @@ def _ensure_sqlite_analysis_columns():
             conn.execute(text(f"ALTER TABLE analyses ADD COLUMN {col_name} {col_type}"))
 
 
-def _ensure_static_analysis_table():
-    if engine.dialect.name != "sqlite":
-        return
-    with engine.begin() as conn:
-        inspector = inspect(conn)
-        if "static_analysis_jobs" in inspector.get_table_names():
-            return
-        conn.execute(
-            text(
-                """
-                CREATE TABLE static_analysis_jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id VARCHAR(64) UNIQUE NOT NULL,
-                    repo_url VARCHAR(1024) NOT NULL,
-                    status VARCHAR(32) NOT NULL DEFAULT 'pending',
-                    created_at DATETIME NOT NULL,
-                    completed_at DATETIME NULL,
-                    error_message TEXT NULL,
-                    report_json TEXT NULL,
-                    health_score INTEGER NULL,
-                    finding_count INTEGER NULL,
-                    primary_language VARCHAR(64) NULL
-                )
-                """
-            )
-        )
-        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_static_analysis_jobs_job_id ON static_analysis_jobs(job_id)"))
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting DynamicAnalyser API")
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_analysis_columns()
-    _ensure_static_analysis_table()
     logger.info("Database tables created")
     yield
     logger.info("Shutting down DynamicAnalyser API")
@@ -128,4 +98,3 @@ app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(app_logs.router, prefix="/api", tags=["app-logs"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(benchmarks.router, prefix="/api", tags=["benchmarks"])
-app.include_router(static_analysis.router, prefix="/api", tags=["static-analysis"])
