@@ -1,13 +1,29 @@
 import React, { useState, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
-  CheckCircle, XCircle, Loader, Circle, ChevronDown, ChevronRight,
-  Download, Play, GitBranch, Zap, Brain, BarChart2, Code, Search,
+  CheckCircle,
+  XCircle,
+  Loader,
+  Circle,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  GitBranch,
+  Zap,
+  Brain,
+  BarChart2,
+  Code,
+  Search,
 } from "lucide-react";
 import {
-  addRepo, getGitHubRuns, ingestRun, indexRepo,
-  getRepoBottlenecks, analyseRun,
+  addRepo,
+  getGitHubRuns,
+  ingestRun,
+  indexRepo,
+  getRepoBottlenecks,
+  analyseRun,
 } from "../services/api";
+import StatusBadge from "../components/StatusBadge";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -39,44 +55,47 @@ function parseRepoInput(raw) {
 
 function StageRow({ stage, icon: Icon }) {
   const [expanded, setExpanded] = useState(false);
+  const toggleable = stage.logs.length > 0 || !!stage.result;
 
   const statusIcon = () => {
     if (stage.status === "running")
-      return <Loader className="spin-icon" size={18} style={{ color: "var(--accent)" }} />;
+      return <Loader className="spin-icon text-brand" size={18} />;
     if (stage.status === "success")
-      return <CheckCircle size={18} style={{ color: "var(--green)" }} />;
+      return <CheckCircle size={18} className="kpi-trend-up" />;
     if (stage.status === "error")
-      return <XCircle size={18} style={{ color: "var(--red)" }} />;
-    return <Circle size={18} style={{ color: "var(--text-muted)", opacity: 0.4 }} />;
+      return <XCircle size={18} className="kpi-trend-down" />;
+    return <Circle size={18} className="text-muted" style={{ opacity: 0.45 }} />;
   };
 
-  const borderColor =
-    stage.status === "success" ? "var(--green)" :
-    stage.status === "error"   ? "var(--red)" :
-    stage.status === "running" ? "var(--accent)" :
-    "var(--border)";
+  const borderColorVar =
+    stage.status === "success"
+      ? "var(--green-500)"
+      : stage.status === "error"
+        ? "var(--red-500)"
+        : stage.status === "running"
+          ? "var(--brand-500)"
+          : "var(--gray-200)";
 
   return (
-    <div className="stage-row" style={{ borderLeftColor: borderColor }}>
+    <div className="dyn-stage-row" style={{ borderLeftColor: borderColorVar }}>
       <div
-        className="stage-header"
-        onClick={() => stage.logs.length > 0 && setExpanded(!expanded)}
-        style={{ cursor: stage.logs.length > 0 ? "pointer" : "default" }}
+        className={`dyn-stage-head ${toggleable ? "clickable" : ""}`}
+        onClick={() => toggleable && setExpanded(!expanded)}
+        role={toggleable ? "button" : undefined}
       >
-        <div className="stage-header-left">
+        <div className="dyn-stage-head-left">
           {statusIcon()}
-          <Icon size={16} style={{ color: "var(--text-muted)" }} />
+          <Icon size={16} className="text-muted" />
           <span className="stage-title">{stage.title}</span>
         </div>
-        <div className="stage-header-right">
-          {stage.summary && (
-            <span className="stage-summary">{stage.summary}</span>
-          )}
-          {stage.logs.length > 0 && (
-            expanded
-              ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} />
-              : <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
-          )}
+        <div className="dyn-stage-head-right">
+          {stage.summary && <span className="stage-summary">{stage.summary}</span>}
+          {toggleable &&
+            (expanded ? (
+              <ChevronDown size={14} className="text-muted" />
+            ) : (
+              <ChevronRight size={14} className="text-muted" />
+            ))}
         </div>
       </div>
 
@@ -91,7 +110,6 @@ function StageRow({ stage, icon: Icon }) {
         </div>
       )}
 
-      {/* Inline result panel for specific stages */}
       {expanded && stage.result && stage.id === "bottlenecks" && (
         <BottleneckResult data={stage.result} />
       )}
@@ -164,9 +182,9 @@ function IndexResult({ data }) {
   );
 }
 
-function BottleneckResult({ data }) {
-  return (
-    <div className="result-panel">
+function BottleneckResult({ data, bare }) {
+  const inner = (
+    <>
       <table style={{ width: "100%", fontSize: 13 }}>
         <thead>
           <tr>
@@ -183,82 +201,107 @@ function BottleneckResult({ data }) {
           {data.bottlenecks.map((b) => (
             <tr key={b.rank}>
               <td>#{b.rank}</td>
-              <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.step_name}</td>
+              <td className="truncate" style={{ maxWidth: 240 }}>
+                {b.step_name}
+              </td>
               <td>{b.composite_score?.toFixed(3)}</td>
               <td>{formatMs(b.mean_ms)}</td>
               <td>{formatMs(b.p95_ms)}</td>
               <td>{(b.pct_of_total * 100).toFixed(1)}%</td>
               <td>
-                <span className={`badge badge-${b.trend_direction === "increasing" ? "failure" : b.trend_direction === "decreasing" ? "success" : "info"}`}>
-                  {b.trend_direction}
-                </span>
+                <StatusBadge status={b.trend_direction} />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+      <div className="text-sm text-muted" style={{ marginTop: 8 }}>
         Analyzed {data.total_runs_analyzed} runs · window {data.analysis_window}
       </div>
-    </div>
+    </>
   );
+  if (bare) return <div className="table-wrap">{inner}</div>;
+  return <div className="result-panel">{inner}</div>;
 }
 
-function AnalysisResult({ data }) {
+function AnalysisResult({ data, bare }) {
   const [expandedSugg, setExpandedSugg] = useState(null);
-  return (
-    <div className="result-panel">
+  const inner = (
+    <>
       {data.root_cause && (
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Root Cause</div>
-          <p style={{ fontSize: 13, lineHeight: 1.6 }}>{data.root_cause}</p>
+          <div className="kpi-label" style={{ marginBottom: 4 }}>
+            Root Cause
+          </div>
+          <p className="text-sm" style={{ lineHeight: 1.6 }}>
+            {data.root_cause}
+          </p>
         </div>
       )}
       {data.anti_patterns?.length > 0 && (
-        <div style={{ marginBottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div className="flex gap-2 flex-wrap" style={{ marginBottom: 12 }}>
           {data.anti_patterns.map((ap) => (
-            <span key={ap} className="badge badge-warning">{ap}</span>
+            <span key={ap} className="badge badge-warning">
+              {ap}
+            </span>
           ))}
         </div>
       )}
-      {data.estimated_total_saving_ms && (
-        <div style={{ color: "var(--green)", fontWeight: 600, marginBottom: 12, fontSize: 14 }}>
+      {data.estimated_total_saving_ms ? (
+        <div className="kpi-trend-up" style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>
           Estimated total saving: {formatMs(data.estimated_total_saving_ms)}
         </div>
-      )}
-      <div style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+      ) : null}
+      <div className="kpi-label" style={{ marginBottom: 8 }}>
         Suggestions ({data.suggestions?.length || 0})
       </div>
       {data.suggestions?.sort((a, b) => a.rank - b.rank).map((s) => (
-        <div key={s.id} className="suggestion-card" style={{ marginBottom: 12 }}>
+        <div
+          key={s.id}
+          className={`suggestion-card effort-${s.effort === "low" ? "low" : s.effort === "high" ? "high" : "medium"}`}
+          style={{ marginBottom: 12 }}
+        >
           <div
-            style={{ display: "flex", justifyContent: "space-between", cursor: "pointer", alignItems: "flex-start" }}
+            className="dyn-stage-head clickable"
             onClick={() => setExpandedSugg(expandedSugg === s.id ? null : s.id)}
           >
             <div>
-              <h4 style={{ fontSize: 14, marginBottom: 2 }}>#{s.rank} {s.title}</h4>
-              <p style={{ fontSize: 12, color: "var(--text-muted)" }}>{s.description}</p>
+              <h4>
+                #{s.rank} {s.title}
+              </h4>
+              <p className="text-sm text-muted">{s.description}</p>
             </div>
-            <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 12 }}>
+            <div className="flex gap-2 flex-shrink-0" style={{ marginLeft: 12 }}>
               <span className="badge badge-success">{formatMs(s.estimated_saving_ms)} saved</span>
-              <span className={`badge badge-${s.effort === "low" ? "low" : s.effort === "medium" ? "medium" : "high"}`}>{s.effort}</span>
+              <span
+                className={`badge ${s.effort === "low" ? "badge-low" : s.effort === "high" ? "badge-high" : "badge-medium"}`}
+              >
+                {s.effort}
+              </span>
             </div>
           </div>
           {expandedSugg === s.id && (
             <div style={{ marginTop: 8 }}>
               {s.target_file && (
-                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
-                  File: <code style={{ color: "var(--accent)" }}>{s.target_file}</code>
-                  {s.target_function && <> · Function: <code style={{ color: "var(--accent)" }}>{s.target_function}</code></>}
+                <div className="text-sm text-muted" style={{ marginBottom: 4 }}>
+                  File: <code>{s.target_file}</code>
+                  {s.target_function && (
+                    <>
+                      {" "}
+                      · Function: <code>{s.target_function}</code>
+                    </>
+                  )}
                 </div>
               )}
               {s.diff_hint && (
                 <div className="diff-block" style={{ marginTop: 6 }}>
                   {s.diff_hint.split("\n").map((line, i) => (
-                    <div
+                    <span
                       key={i}
-                      className={line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-del" : ""}
-                    >{line}</div>
+                      className={`diff-line ${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-del" : "diff-ctx"}`}
+                    >
+                      {line}
+                    </span>
                   ))}
                 </div>
               )}
@@ -266,8 +309,10 @@ function AnalysisResult({ data }) {
           )}
         </div>
       ))}
-    </div>
+    </>
   );
+  if (bare) return <div>{inner}</div>;
+  return <div className="result-panel">{inner}</div>;
 }
 
 // ─── Report generator ────────────────────────────────────────────────────────
@@ -388,6 +433,8 @@ export default function Analyze() {
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [results, setResults] = useState({});
+  const [panelBottlenecks, setPanelBottlenecks] = useState(true);
+  const [panelAi, setPanelAi] = useState(true);
   const logsEndRef = useRef(null);
 
   // ── stage helpers ──────────────────────────────────────────────────────────
@@ -613,114 +660,166 @@ export default function Analyze() {
 
   const successCount = stages.filter((s) => s.status === "success").length;
   const hasAnyResults = stages.some((s) => s.status !== "pending");
+  const progressPct = Math.min(100, Math.round((successCount / stages.length) * 100));
+  const examples = ["facebook/react", "fastapi/fastapi", "OpenLake/canonforces"];
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Analyze Repository</h1>
-        <p>Run the full DynamicAnalyzer pipeline: ingest → index → bottlenecks → AI analysis</p>
+      <div className="page-header page-header-row">
+        <div>
+          <h1>Analyze Repository</h1>
+          <p>Run the full dynamic analysis pipeline: ingest → index → bottlenecks → AI</p>
+        </div>
+        <Link to="/#how-it-works" className="btn btn-ghost btn-sm">
+          How it works
+        </Link>
       </div>
 
-      {/* Input form */}
-      <div className="card">
+      <div className="card centered-narrow">
         <div className="card-title">Target Repository</div>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div className="card-subtitle">Paste a GitHub URL or owner/repo format</div>
+        <div className="form-input-icon-wrap" style={{ marginTop: 16 }}>
+          <GitBranch size={18} className="input-icon-left" strokeWidth={1.75} />
           <input
             className="form-input"
-            placeholder="owner/repo or https://github.com/owner/repo"
+            placeholder="https://github.com/owner/repo"
             value={repoInput}
             onChange={(e) => setRepoInput(e.target.value)}
             disabled={running}
             onKeyDown={(e) => e.key === "Enter" && !running && runPipeline()}
-            style={{ flex: 1 }}
           />
-          <button
-            className="btn btn-primary"
-            onClick={runPipeline}
-            disabled={running || !repoInput.trim()}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            {running ? (
-              <><Loader size={16} className="spin-icon" /> Running…</>
-            ) : (
-              <><Play size={16} /> Run Analysis</>
-            )}
-          </button>
         </div>
+        <div className="chip-row">
+          {examples.map((ex) => (
+            <button
+              key={ex}
+              type="button"
+              className="example-repo-chip"
+              disabled={running}
+              onClick={() => setRepoInput(ex)}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-lg btn-block"
+          style={{ marginTop: 16 }}
+          onClick={runPipeline}
+          disabled={running || !repoInput.trim()}
+        >
+          {running ? (
+            <>
+              <Loader size={18} className="spin-icon" /> Running…
+            </>
+          ) : (
+            <>
+              <Zap size={18} /> Run Analysis
+            </>
+          )}
+        </button>
         {running && (
-          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-muted)" }}>
+          <div className="flex items-center gap-2 text-sm text-muted" style={{ marginTop: 12 }}>
             <Loader size={14} className="spin-icon" />
             Pipeline running — {successCount}/{stages.length} stages complete
           </div>
         )}
       </div>
 
-      {/* Pipeline stages */}
       {hasAnyResults && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div className="card-title" style={{ margin: 0 }}>Pipeline Progress</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {done && (
-                <span className="badge badge-success">
-                  <CheckCircle size={12} style={{ display: "inline", marginRight: 4 }} />
-                  Complete
-                </span>
-              )}
+        <div className="card analyze-pipeline-card">
+          {done && (
+            <div className="alert alert-success flex items-center gap-2" style={{ margin: "0 0 16px" }}>
+              <CheckCircle size={18} />
+              Analysis complete — review results below.
+            </div>
+          )}
+          <div className="card-header" style={{ marginBottom: 12 }}>
+            <div className="card-title" style={{ margin: 0 }}>
+              Pipeline Progress
+            </div>
+            <div className="flex gap-2 items-center">
               {(done || stages.some((s) => s.status === "success")) && (
-                <button className="btn btn-secondary btn-sm" onClick={downloadReport}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={downloadReport}>
                   <Download size={14} /> Download Report
                 </button>
               )}
             </div>
           </div>
-          <div style={{ padding: "8px 0" }}>
+          <div className="pipeline-progress-track">
+            <div className="pipeline-progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div>
             {stages.map((stage) => (
-              <StageRow
-                key={stage.id}
-                stage={stage}
-                icon={stage.icon}
-              />
+              <StageRow key={stage.id} stage={stage} icon={stage.icon} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Done summary */}
-      {done && results.analysis && (
-        <div className="card" style={{ borderLeft: "3px solid var(--green)" }}>
-          <div className="card-title" style={{ color: "var(--green)" }}>
-            ✓ Analysis Complete
-          </div>
-          <div className="kpi-grid" style={{ marginBottom: 0 }}>
+      {done && (
+        <>
+          <div className="grid-3 section">
             {results.ingestedRuns && (
-              <div className="kpi-card">
-                <div className="kpi-label">Runs Ingested</div>
-                <div className="kpi-value">{results.ingestedRuns.length}</div>
+              <div className="kpi-mini">
+                <div className="kpi-mini-label">Runs Ingested</div>
+                <div className="kpi-mini-value">{results.ingestedRuns.length}</div>
               </div>
             )}
             {results.codeIndex && (
-              <div className="kpi-card">
-                <div className="kpi-label">Functions Indexed</div>
-                <div className="kpi-value">{results.codeIndex.total_functions}</div>
+              <div className="kpi-mini" style={{ background: "var(--teal-50)", borderColor: "#99f6e4" }}>
+                <div className="kpi-mini-label" style={{ color: "var(--teal-700)" }}>
+                  Functions Indexed
+                </div>
+                <div className="kpi-mini-value">{results.codeIndex.total_functions}</div>
               </div>
             )}
             {results.bottlenecks && (
-              <div className="kpi-card">
-                <div className="kpi-label">Bottlenecks Found</div>
-                <div className="kpi-value">{results.bottlenecks.bottlenecks.length}</div>
-              </div>
-            )}
-            {results.analysis && (
-              <div className="kpi-card">
-                <div className="kpi-label">Estimated Saving</div>
-                <div className="kpi-value" style={{ color: "var(--green)" }}>
-                  {formatMs(results.analysis.estimated_total_saving_ms)}
+              <div className="kpi-mini" style={{ background: "var(--amber-50)", borderColor: "#fde68a" }}>
+                <div className="kpi-mini-label" style={{ color: "var(--amber-700)" }}>
+                  Bottlenecks Found
                 </div>
+                <div className="kpi-mini-value">{results.bottlenecks.bottlenecks.length}</div>
               </div>
             )}
           </div>
-          <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+
+          {results.bottlenecks && (
+            <div className="card">
+              <button
+                type="button"
+                className="dyn-stage-head clickable"
+                style={{ padding: "4px 0", marginBottom: panelBottlenecks ? 12 : 0 }}
+                onClick={() => setPanelBottlenecks((o) => !o)}
+              >
+                <div className="card-title" style={{ margin: 0 }}>
+                  Bottlenecks
+                </div>
+                {panelBottlenecks ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+              </button>
+              {panelBottlenecks && <BottleneckResult data={results.bottlenecks} bare />}
+            </div>
+          )}
+
+          {results.analysis && (
+            <div className="card">
+              <button
+                type="button"
+                className="dyn-stage-head clickable"
+                style={{ padding: "4px 0", marginBottom: panelAi ? 12 : 0 }}
+                onClick={() => setPanelAi((o) => !o)}
+              >
+                <div className="card-title" style={{ margin: 0 }}>
+                  AI Analysis
+                </div>
+                {panelAi ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+              </button>
+              {panelAi && <AnalysisResult data={results.analysis} bare />}
+            </div>
+          )}
+
+          <div className="flex gap-2 flex-wrap">
             {results.repo && (
               <Link
                 to={`/repos/${results.repo.owner}/${results.repo.name}`}
@@ -730,18 +829,15 @@ export default function Analyze() {
               </Link>
             )}
             {results.ingestedRuns?.[0] && (
-              <Link
-                to={`/runs/${results.ingestedRuns[0].run_id}`}
-                className="btn btn-primary btn-sm"
-              >
+              <Link to={`/runs/${results.ingestedRuns[0].run_id}`} className="btn btn-primary btn-sm">
                 <BarChart2 size={14} /> View Run Detail
               </Link>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={downloadReport}>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={downloadReport}>
               <Download size={14} /> Download Report
             </button>
           </div>
-        </div>
+        </>
       )}
 
       <div ref={logsEndRef} />

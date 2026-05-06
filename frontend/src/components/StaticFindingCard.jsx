@@ -1,90 +1,169 @@
-import React, { useMemo, useState } from "react";
-import { Boxes, Brain, CheckSquare, MessageSquare, Shield, Sparkles, Star, TestTube, Zap } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Boxes, Brain, MessageSquare, Shield, Sparkles, TestTube, Zap } from "lucide-react";
+import StatusBadge from "./StatusBadge";
 
 const AGENT_META = {
-  security: { icon: Shield, label: "Security" },
-  performance: { icon: Zap, label: "Performance" },
-  architecture: { icon: Boxes, label: "Architecture" },
-  test_coverage: { icon: TestTube || CheckSquare, label: "Test Coverage" },
-  orchestrator: { icon: Brain, label: "Orchestrator" },
-  critique: { icon: MessageSquare, label: "Critique" },
-  synthesis: { icon: Sparkles || Star, label: "Synthesis" },
+  security: { icon: Shield, label: "Security Agent", sq: "security" },
+  performance: { icon: Zap, label: "Performance Agent", sq: "performance" },
+  architecture: { icon: Boxes, label: "Architecture Agent", sq: "architecture" },
+  test_coverage: { icon: TestTube, label: "Test Coverage", sq: "test_coverage" },
+  orchestrator: { icon: Brain, label: "Orchestrator", sq: "orchestrator" },
+  critique: { icon: MessageSquare, label: "Critique", sq: "critique" },
+  synthesis: { icon: Sparkles, label: "Synthesis", sq: "synthesis" },
 };
 
-const severityStyle = (severity) => {
-  switch ((severity || "").toUpperCase()) {
-    case "CRITICAL":
-      return { background: "var(--red)", color: "white" };
-    case "HIGH":
-      return { background: "#f97316", color: "white" };
-    case "MEDIUM":
-      return { background: "var(--amber, #f59e0b)", color: "black" };
-    case "LOW":
-      return { background: "var(--accent)", color: "white" };
-    default:
-      return { background: "var(--border)", color: "var(--text-muted)" };
-  }
-};
+const KNOWN_SEV = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]);
+
+function severityBadgeStatus(sev) {
+  const u = (sev || "").toUpperCase();
+  return KNOWN_SEV.has(u) ? u : "INFO";
+}
 
 export default function StaticFindingCard({ card, jobId }) {
   const [tab, setTab] = useState("developer");
   const [showEvidence, setShowEvidence] = useState(false);
   const [showFix, setShowFix] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+
   const finding = card.finding || {};
-  const meta = AGENT_META[finding.agent_id] || { icon: Shield, label: finding.agent_id || "Agent" };
+  const meta = AGENT_META[finding.agent_id] || {
+    icon: Shield,
+    label: finding.agent_id || "Agent",
+    sq: "default",
+  };
   const AgentIcon = meta.icon;
+  const sevStatus = severityBadgeStatus(finding.severity);
   const key = `static-feedback:${jobId}:${finding.file_path}:${finding.start_line}:${finding.title}`;
-  const feedback = useMemo(() => localStorage.getItem(key) || "", [key]);
+  const [feedback, setFeedbackState] = useState("");
+  useEffect(() => {
+    setFeedbackState(localStorage.getItem(key) || "");
+  }, [key]);
 
   const setFeedback = (v) => {
     localStorage.setItem(key, v);
+    setFeedbackState(v);
   };
 
-  return (
-    <div className="card" style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <AgentIcon size={15} />
-        <strong>{meta.label}</strong>
-        <span className="badge" style={severityStyle(finding.severity)}>{finding.severity}</span>
-        <span className="badge badge-info">{finding.confidence}</span>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{finding.file_path}:{finding.start_line}</span>
-      </div>
-      <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8 }}>{finding.title}</div>
+  const body =
+    tab === "developer"
+      ? card.explanation_technical
+      : tab === "manager"
+        ? card.explanation_manager
+        : card.explanation_executive;
 
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+  const verdict = (card.critique_verdict || "").toUpperCase();
+  const verdictStatus =
+    verdict === "CONFIRMED" || verdict === "PLAUSIBLE" || verdict === "DISPUTED" ? verdict : "PLAUSIBLE";
+
+  return (
+    <div className="card finding-card-wrap">
+      <div className="finding-card-header">
+        <div className="finding-card-agent-row">
+          <div className={`agent-icon-sq ${meta.sq}`}>
+            <AgentIcon size={16} strokeWidth={1.75} />
+          </div>
+          <span className="badge badge-brand">{meta.label}</span>
+          <StatusBadge status={sevStatus} />
+          <span className="badge badge-info">{finding.confidence || "—"}</span>
+        </div>
+        <span className="font-mono text-sm text-muted">
+          {finding.file_path}:{finding.start_line}
+        </span>
+      </div>
+
+      <div className="finding-title">{finding.title}</div>
+
+      <div className="tab-bar tab-bar-inline">
         {["developer", "manager", "executive"].map((t) => (
-          <button key={t} className={`btn btn-sm ${tab === t ? "btn-primary" : "btn-secondary"}`} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            type="button"
+            className={`tab-btn ${tab === t ? "active" : ""}`}
+            onClick={() => setTab(t)}
+          >
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
-      <p style={{ marginTop: 10, color: "var(--text-muted)" }}>
-        {tab === "developer" ? card.explanation_technical : tab === "manager" ? card.explanation_manager : card.explanation_executive}
-      </p>
 
-      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-        <button className="btn btn-sm btn-secondary" onClick={() => setShowEvidence((v) => !v)}>{showEvidence ? "Hide Evidence" : "Show Evidence"}</button>
-        <button className="btn btn-sm btn-secondary" onClick={() => setShowFix((v) => !v)}>{showFix ? "Hide Fix" : "Show Fix"}</button>
+      <p className={`finding-desc ${descExpanded ? "" : "collapsed"}`}>{body}</p>
+      <button
+        type="button"
+        className="link-muted-btn"
+        onClick={() => setDescExpanded((e) => !e)}
+      >
+        {descExpanded ? "Show less" : "Read more"}
+      </button>
+
+      <div className="finding-actions">
+        <button
+          type="button"
+          className="link-muted-btn"
+          onClick={() => setShowEvidence((v) => !v)}
+        >
+          {showEvidence ? "Hide evidence" : "Show evidence"}
+        </button>
+        <button
+          type="button"
+          className="link-muted-btn"
+          onClick={() => setShowFix((v) => !v)}
+        >
+          {showFix ? "Hide fix" : "View fix"}
+        </button>
       </div>
+
       {showEvidence && (
-        <pre className="diff-block" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{finding.evidence}</pre>
-      )}
-      {showFix && (
-        <pre className="diff-block" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-          {String(card.fix_snippet || "").split("\n").map((line, i) => (
-            <div key={`${i}-${line}`} className={line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-del" : ""}>{line}</div>
-          ))}
+        <pre className="evidence-snippet" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+          {finding.evidence || "—"}
         </pre>
       )}
 
-      <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span className="badge badge-info">{card.critique_verdict}</span>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{card.critique_note}</span>
+      {showFix && (
+        <div className="diff-block" style={{ marginTop: 12 }}>
+          {String(card.fix_snippet || "")
+            .split("\n")
+            .map((line, i) => (
+              <span
+                key={`${i}-${line.slice(0, 12)}`}
+                className={`diff-line ${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-del" : "diff-ctx"}`}
+              >
+                {line}
+              </span>
+            ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 12 }}>
+        {card.estimated_effort && <EffortSpan effort={card.estimated_effort} />}
       </div>
-      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <button className={`btn btn-sm ${feedback === "up" ? "btn-primary" : "btn-secondary"}`} onClick={() => setFeedback("up")}>👍 Helpful</button>
-        <button className={`btn btn-sm ${feedback === "down" ? "btn-primary" : "btn-secondary"}`} onClick={() => setFeedback("down")}>👎 Not Helpful</button>
+
+      <div className="finding-card-footer">
+        <StatusBadge status={verdictStatus} />
+        <span className="critique-note">{card.critique_note || ""}</span>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={`btn btn-sm btn-ghost ${feedback === "up" ? "active" : ""}`}
+          onClick={() => setFeedback("up")}
+        >
+          👍 Helpful
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm btn-ghost ${feedback === "down" ? "active" : ""}`}
+          onClick={() => setFeedback("down")}
+        >
+          👎 Not Helpful
+        </button>
       </div>
     </div>
   );
+}
+
+function EffortSpan({ effort }) {
+  const e = (effort || "").toLowerCase();
+  const cls = e === "low" ? "badge-green" : e === "high" ? "badge-red" : "badge-amber";
+  return <span className={`badge ${cls}`}>Effort: {effort}</span>;
 }

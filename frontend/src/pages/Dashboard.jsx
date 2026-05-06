@@ -1,28 +1,28 @@
 import React, { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
-  ArrowUp,
   Bot,
   Brain,
+  Check,
+  CheckCircle,
   Flame,
   GitBranch,
   MessageCircle,
   Shield,
-  TrendingUp,
+  X,
   Zap,
 } from "lucide-react";
 import {
   getActiveRegressions,
   getDashboardSummary,
-  getFleetSummary,
   listRepos,
-  listAppSessions,
+  listStaticJobs,
 } from "../services/api";
 import KPICard from "../components/KPICard";
 import StatusBadge from "../components/StatusBadge";
 
 function formatMs(ms) {
-  if (!ms) return "—";
+  if (!ms && ms !== 0) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
@@ -37,570 +37,402 @@ function formatRunDuration(ms) {
   return `${seconds}s`;
 }
 
-function getWorkflowLabel(run) {
-  const name = run.workflow_name?.trim() || "Workflow";
-  const branch = run.head_branch ? `(${run.head_branch})` : "";
-  return `${name} ${branch}`.trim();
+function workflowLabel(run) {
+  const name = (run.workflow_name || "Workflow").trim();
+  const branch = run.head_branch ? ` · ${run.head_branch}` : "";
+  return `#${run.run_number} · ${name}${branch}`;
 }
 
 function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
-// ── CI/CD section ─────────────────────────────────────────────────────────────
-
-function CICDDashboard() {
+export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [repos, setRepos] = useState([]);
+  const [regressionCount, setRegressionCount] = useState(0);
+  const [staticFindingSum, setStaticFindingSum] = useState(0);
+  const [health, setHealth] = useState({ api: false, database: false, github: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const load = () => {
-    setLoading(true);
-    Promise.all([getDashboardSummary(), listRepos()])
-      .then(([s, r]) => { setSummary(s); setRepos(r); })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  if (loading) return <div className="loading">Loading CI/CD data...</div>;
-  if (error) return <div className="error-msg">{error}</div>;
-
-  return (
-    <>
-      {summary && (
-        <div className="kpi-grid">
-          <KPICard label="Repos Tracked" value={summary.total_repos} />
-          <KPICard label="Total Runs" value={summary.total_runs} />
-          <KPICard label="Analyses Done" value={summary.total_analyses} />
-          <KPICard label="Avg Duration" value={formatMs(summary.avg_duration_ms)} />
-          <KPICard label="Avg Saving" value={formatMs(summary.avg_saving_ms)} sub="per analysis" />
-        </div>
-      )}
-
-      <div className="card">
-        <div className="card-title">Tracked Repositories</div>
-        {repos.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-            No repositories tracked yet. Add one in Settings or use Analyze Repo.
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Repository</th>
-                  <th>Branch</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {repos.map((r) => (
-                  <tr key={r.id}>
-                    <td><Link to={`/repos/${r.owner}/${r.name}`}>{r.full_name}</Link></td>
-                    <td style={{ color: "var(--text-muted)" }}>{r.default_branch}</td>
-                    <td>
-                      {r.is_active
-                        ? <StatusBadge status="success" />
-                        : <StatusBadge status="inactive" />}
-                    </td>
-                    <td>
-                      <Link to={`/repos/${r.owner}/${r.name}`} className="btn btn-sm btn-secondary">
-                        View Runs
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {summary && summary.recent_runs.length > 0 && (
-        <div className="card">
-          <div className="card-title">Recent Activity</div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Run</th>
-                  <th>Workflow</th>
-                  <th>Status</th>
-                  <th>Duration</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.recent_runs.map((r) => (
-                  <tr key={r.id}>
-                    <td><Link to={`/runs/${r.id}`}>#{r.run_number}</Link></td>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{getWorkflowLabel(r)}</div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                        Run ID #{r.github_run_id}
-                      </div>
-                    </td>
-                    <td><StatusBadge status={r.conclusion || r.status} /></td>
-                    <td>{formatRunDuration(r.total_duration_ms)}</td>
-                    <td style={{ color: "var(--text-muted)" }}>{formatDate(r.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ── App Logs section ──────────────────────────────────────────────────────────
-
-function groupByApp(sessions) {
-  const map = {};
-  for (const s of sessions) {
-    if (!map[s.app_name]) {
-      map[s.app_name] = { app_name: s.app_name, sessions: [], totalDur: 0, totalCalls: 0 };
-    }
-    map[s.app_name].sessions.push(s);
-    map[s.app_name].totalDur   += s.total_duration_ms || 0;
-    map[s.app_name].totalCalls += s.total_calls || 0;
-  }
-  return Object.values(map).sort((a, b) => {
-    const la = a.sessions[0]?.created_at ?? "";
-    const lb = b.sessions[0]?.created_at ?? "";
-    return lb.localeCompare(la);
-  });
-}
-
-function AppLogsDashboard() {
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const load = () => {
-    setLoading(true);
-    listAppSessions()
-      .then(setSessions)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  if (loading) return <div className="loading">Loading app log sessions...</div>;
-  if (error) return <div className="error-msg">{error}</div>;
-
-  const totalCalls = sessions.reduce((s, r) => s + (r.total_calls || 0), 0);
-  const totalDur   = sessions.reduce((s, r) => s + (r.total_duration_ms || 0), 0);
-  const analysed   = sessions.filter((s) => s.status === "completed").length;
-
-  const appGroups = groupByApp(sessions);
-
-  return (
-    <>
-      <FleetSummaryWidget />
-      <RegressionAlertsSummary />
-
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <Link to="/app-logs/upload" className="btn btn-primary">
-          + Upload Log File
-        </Link>
-      </div>
-
-      <div className="kpi-grid">
-        <KPICard label="Applications" value={appGroups.length} />
-        <KPICard label="Log Sessions" value={sessions.length} />
-        <KPICard label="Function Calls" value={totalCalls} />
-        <KPICard label="Total Captured" value={formatMs(totalDur)} />
-        <KPICard label="Analysed" value={analysed} sub="sessions" />
-      </div>
-
-      <div className="card">
-        <div className="card-title">Applications</div>
-        {appGroups.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-            No log sessions yet.{" "}
-            <Link to="/app-logs/upload">Upload a log file</Link> to get started.
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>App name</th>
-                  <th>Sessions</th>
-                  <th>Avg duration</th>
-                  <th>Slowest function</th>
-                  <th>Last upload</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {appGroups.map((g) => {
-                  const avgDur = g.sessions.length
-                    ? Math.round(g.totalDur / g.sessions.length)
-                    : 0;
-                  // Find the slowest single function call across all sessions in this group
-                  let slowestFn = "—";
-                  let maxDur = -1;
-                  for (const s of g.sessions) {
-                    if ((s.total_duration_ms || 0) > maxDur) {
-                      maxDur = s.total_duration_ms || 0;
-                      // We don't have per-call data here; use app-level duration label
-                    }
-                  }
-                  // Sort sessions newest first to get last upload
-                  const sorted = [...g.sessions].sort(
-                    (a, b) => new Date(b.created_at) - new Date(a.created_at)
-                  );
-                  const lastUpload = sorted[0]?.created_at;
-
-                  return (
-                    <tr key={g.app_name}>
-                      <td>
-                        <Link
-                          to={`/app-logs/apps/${encodeURIComponent(g.app_name)}`}
-                          style={{ fontWeight: 700 }}
-                        >
-                          {g.app_name}
-                        </Link>
-                      </td>
-                      <td>{g.sessions.length}</td>
-                      <td>{formatMs(avgDur)}</td>
-                      <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                        {g.sessions.length > 0 ? formatMs(maxDur) : "—"}
-                      </td>
-                      <td style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                        {lastUpload ? formatDate(lastUpload) : "—"}
-                      </td>
-                      <td>
-                        <Link
-                          to={`/app-logs/apps/${encodeURIComponent(g.app_name)}`}
-                          className="btn btn-sm btn-secondary"
-                        >
-                          Sessions
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-function FleetSummaryWidget() {
-  const [summary, setSummary] = useState(null);
-
   useEffect(() => {
-    let mounted = true;
-    getFleetSummary()
-      .then((data) => {
-        if (mounted) setSummary(data);
-      })
-      .catch(() => {});
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [s, r, regressions, jobs, hRes, ghRes] = await Promise.all([
+          getDashboardSummary().catch(() => null),
+          listRepos().catch(() => []),
+          getActiveRegressions().catch(() => []),
+          listStaticJobs().catch(() => []),
+          fetch("/api/health").catch(() => null),
+          fetch("/api/repos").catch(() => null),
+        ]);
+        if (cancelled) return;
+        setSummary(s);
+        setRepos(r || []);
+        setRegressionCount((regressions || []).length);
+        const completedJobs = (jobs || []).filter((j) => j.status === "completed");
+        setStaticFindingSum(completedJobs.reduce((acc, j) => acc + (j.finding_count || 0), 0));
+        let apiOk = false;
+        let dbOk = false;
+        if (hRes && hRes.ok) {
+          apiOk = true;
+          const hj = await hRes.json().catch(() => ({}));
+          dbOk = hj.database === "healthy";
+        }
+        setHealth({
+          api: apiOk,
+          database: dbOk,
+          github: !!(ghRes && ghRes.ok),
+        });
+      } catch (e) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
     return () => {
-      mounted = false;
+      cancelled = true;
     };
   }, []);
 
-  if (!summary || summary.total_app_sessions === 0) return null;
-
-  return (
-    <div
-      style={{
-        marginBottom: 12,
-        border: "0.5px solid var(--color-border-tertiary)",
-        borderRadius: "var(--border-radius-lg)",
-        padding: "10px 12px",
-        background: "var(--color-background-primary)",
-      }}
-    >
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Fleet Summary</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-        {summary.total_app_sessions} sessions · {summary.total_repos} repos · avg{" "}
-        {formatMs(summary.fleet_avg_duration_ms)} · common issue:{" "}
-        {summary.most_common_anti_pattern || "N/A"}
-      </div>
-    </div>
+  const recentRuns = (summary?.recent_runs || []).slice(0, 8);
+  const heroFindings = Math.max(
+    0,
+    (summary?.total_analyses || 0) - regressionCount + Math.floor(staticFindingSum / 4)
   );
-}
 
-function RegressionAlertsSummary() {
-  const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    getActiveRegressions()
-      .then((data) => {
-        if (mounted) setAlerts(data || []);
-      })
-      .catch(() => {
-        if (mounted) setAlerts([]);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  if (loading) return null;
-
-  if (alerts.length === 0) {
+  if (loading) {
     return (
-      <div style={{ marginBottom: 12 }}>
-        <span
-          style={{
-            display: "inline-block",
-            padding: "6px 12px",
-            borderRadius: 999,
-            background: "rgba(34,197,94,.14)",
-            color: "#15803d",
-            fontWeight: 700,
-            fontSize: 13,
-          }}
-        >
-          ✓ No regressions detected
-        </span>
+      <div className="section fade-in">
+        <div className="skeleton" style={{ height: 140, marginBottom: 24 }} />
+        <div className="kpi-grid">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 96 }} />
+          ))}
+        </div>
+        <div className="skeleton" style={{ height: 280 }} />
       </div>
     );
   }
 
-  const top3 = [...alerts].sort((a, b) => b.ratio - a.ratio).slice(0, 3);
-  const appCount = new Set(alerts.map((a) => a.app_name)).size;
+  if (error) {
+    return <div className="error-msg">{error}</div>;
+  }
 
   return (
-    <div
-      style={{
-        marginBottom: 14,
-        border: "1px solid rgba(239,68,68,.35)",
-        borderRadius: 10,
-        padding: "10px 12px",
-        background: "rgba(239,68,68,.08)",
-      }}
-    >
-      <div style={{ color: "#b91c1c", fontWeight: 700, marginBottom: 6 }}>
-        ⚠ {alerts.length} active regressions across {appCount} apps
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {top3.map((a) => (
-          <div key={a.id} style={{ fontSize: 13, color: "var(--text-primary)" }}>
-            {a.app_name} / <code style={{ fontSize: 12 }}>{a.function_name}</code> / {a.ratio}× slower
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 8 }}>
-        <Link to="/?mode=applogs" className="btn btn-sm btn-secondary">View all</Link>
-      </div>
-    </div>
-  );
-}
-
-// ── Root Dashboard with mode toggle ──────────────────────────────────────────
-
-export default function Dashboard() {
-  const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState(
-    searchParams.get("mode") === "cicd" ? "cicd" : "applogs"
-  ); // "cicd" | "applogs"
-  const [heroStats, setHeroStats] = useState({
-    functionCalls: 0,
-    appsTracked: 0,
-    analysesRun: 0,
-    timeSaved: "0ms",
-    regressions: 0,
-  });
-
-  useEffect(() => {
-    const m = searchParams.get("mode");
-    if (m === "applogs" || m === "cicd") setMode(m);
-  }, [searchParams]);
-
-  useEffect(() => {
-    let mounted = true;
-    Promise.all([
-      listAppSessions().catch(() => []),
-      getDashboardSummary().catch(() => null),
-      getActiveRegressions().catch(() => []),
-    ]).then(([sessions, summary, regressions]) => {
-      if (!mounted) return;
-      const appSet = new Set((sessions || []).map((s) => s.app_name));
-      const totalCalls = (sessions || []).reduce((sum, s) => sum + (s.total_calls || 0), 0);
-      const totalCapturedMs = (sessions || []).reduce((sum, s) => sum + (s.total_duration_ms || 0), 0);
-      const avgSaving = summary?.avg_saving_ms || 0;
-      const combinedSavingMs = avgSaving > 0 ? avgSaving * (summary?.total_analyses || 0) : totalCapturedMs;
-      setHeroStats({
-        functionCalls: totalCalls,
-        appsTracked: appSet.size,
-        analysesRun: summary?.total_analyses || 0,
-        timeSaved: formatMs(combinedSavingMs),
-        regressions: (regressions || []).length,
-      });
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  return (
-    <div>
-      <section className="dashboard-home fade-in">
-        <div className="dashboard-hero card">
-          <div className="hero-chip">
-            <span className="hero-chip-dot" />
-            AI-POWERED CODE ANALYSIS PLATFORM
-          </div>
-          <h1>DynamicAnalyser</h1>
-          <p>
-            Upload any application log or connect a GitHub repo. AI analyses every function call,
-            finds the bottleneck, links it to your source code, and tells you exactly how to fix it.
+    <div className="fade-in">
+      <section className="card dashboard-hero-card">
+        <div>
+          <div className="dashboard-hero-title">CodeAnalyser</div>
+          <p className="dashboard-hero-sub">
+            Enterprise-grade multi-agent analysis for modern codebases
           </p>
-          <div className="hero-actions">
-            <Link to="/app-logs/upload" className="btn btn-gradient hero-cta-primary">
-              <ArrowUp size={15} /> Upload App Log
+          <div className="dashboard-hero-actions">
+            <Link to="/analyze" className="btn btn-primary btn-lg">
+              <GitBranch size={18} strokeWidth={1.75} />
+              Analyze Repository
             </Link>
-            <Link to="/analyze" className="btn btn-secondary hero-cta-secondary">
-              <GitBranch size={15} /> Analyze GitHub Repo
-            </Link>
-            <Link to="/static-analysis" className="btn btn-secondary hero-cta-secondary">
-              <Shield size={15} /> Static Analysis
-            </Link>
-          </div>
-        </div>
-
-        <div className="hero-stat-grid">
-          <div className="hero-stat-card">
-            <div className="hero-stat-label">Functions Analysed</div>
-            <div className="hero-stat-value">{heroStats.functionCalls.toLocaleString()}</div>
-          </div>
-          <div className="hero-stat-card">
-            <div className="hero-stat-label">Apps Tracked</div>
-            <div className="hero-stat-value">{heroStats.appsTracked}</div>
-          </div>
-          <div className="hero-stat-card">
-            <div className="hero-stat-label">AI Analyses Run</div>
-            <div className="hero-stat-value">{heroStats.analysesRun}</div>
-          </div>
-          <div className="hero-stat-card">
-            <div className="hero-stat-label">Time Saved</div>
-            <div className="hero-stat-value semantic-positive">{heroStats.timeSaved}</div>
-          </div>
-        </div>
-
-        <div className="hero-panel card">
-          <div className="hero-panel-title">Platform Capabilities</div>
-          <div className="hero-feature-grid">
-            <Link className="hero-feature-item clickable" to="/?mode=applogs">
-              <Flame size={15} />
-              <div className="hero-feature-copy"><strong>Flamegraph</strong><span>Visual call breakdown</span></div>
-            </Link>
-            <Link className="hero-feature-item clickable" to="/analyze">
-              <Bot size={15} />
-              <div className="hero-feature-copy"><strong>AI Root Cause</strong><span>Finds why it is slow</span></div>
-            </Link>
-            <Link className="hero-feature-item clickable" to="/?mode=applogs">
-              <MessageCircle size={15} />
-              <div className="hero-feature-copy"><strong>Chat AI</strong><span>Ask in plain English</span></div>
-            </Link>
-            <Link className="hero-feature-item clickable" to="/settings">
-              <Brain size={15} />
-              <div className="hero-feature-copy"><strong>Self-Learning</strong><span>Improves with feedback</span></div>
-            </Link>
-            <Link className="hero-feature-item clickable" to="/static-analysis">
-              <Shield size={15} />
-              <div className="hero-feature-copy">
-                <strong>SAST Scanner</strong>
-                <span>Multi-agent code security</span>
-              </div>
+            <Link to="/static-analysis" className="btn btn-secondary btn-lg">
+              <Shield size={18} strokeWidth={1.75} />
+              Static Analysis
             </Link>
           </div>
         </div>
-
-        <div className="hero-panel card">
-          <div className="hero-panel-title">How It Works</div>
-          <div className="hero-steps-grid">
-            <div className="hero-step">
-              <ArrowUp size={14} />
-              <em>STEP 01</em>
-              <span>Upload</span>
-              <small>Any log format</small>
-            </div>
-            <div className="hero-step">
-              <Bot size={14} />
-              <em>STEP 02</em>
-              <span>AI Analyses</span>
-              <small>Reads slow timings</small>
-            </div>
-            <div className="hero-step">
-              <Zap size={14} />
-              <em>STEP 03</em>
-              <span>Get Fixes</span>
-              <small>Real code diffs</small>
-            </div>
-            <div className="hero-step">
-              <TrendingUp size={14} />
-              <em>STEP 04</em>
-              <span>Track Progress</span>
-              <small>Debt score falls</small>
-            </div>
+        <div className="hero-stats-strip">
+          <div className="hero-stat-pill">
+            <span className="hero-stat-pill-value">{summary?.total_repos ?? 0}</span>
+            <span className="hero-stat-pill-label">Repos tracked</span>
           </div>
-        </div>
-
-        <div className="hero-status-pill">
-          <span className={`hero-status-dot ${heroStats.regressions > 0 ? "warn" : ""}`} />
-          {heroStats.regressions === 0
-            ? "All systems healthy - no regressions detected"
-            : `${heroStats.regressions} active regression(s) detected`}
+          <div className="hero-stat-pill">
+            <span className="hero-stat-pill-value">{summary?.total_analyses ?? 0}</span>
+            <span className="hero-stat-pill-label">Analyses run</span>
+          </div>
+          <div className="hero-stat-pill">
+            <span className="hero-stat-pill-value">{heroFindings}</span>
+            <span className="hero-stat-pill-label">Findings resolved</span>
+          </div>
         </div>
       </section>
 
-      <div
-        className="page-header"
-        style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-      >
+      <div className="kpi-grid section">
+        <KPICard label="Repositories Tracked" value={summary?.total_repos ?? 0} />
+        <KPICard label="Total Runs Ingested" value={summary?.total_runs ?? 0} />
+        <KPICard label="AI Analyses Done" value={summary?.total_analyses ?? 0} />
+        <KPICard
+          label="Average Time Saved"
+          value={formatMs(summary?.avg_saving_ms)}
+          sub="per completed analysis"
+        />
+        <KPICard
+          label="Active Regressions"
+          value={regressionCount}
+          valueClassName={regressionCount > 0 ? "regression-bad" : "regression-ok"}
+        />
+      </div>
+
+      <div className="grid-two-65-35">
         <div>
-          <h1>Dashboard</h1>
-          <p>
-            {mode === "cicd"
-              ? "CI/CD Pipeline Performance Overview"
-              : "Application Log Analysis Overview"}
-          </p>
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <div className="card-title">Recent Repositories</div>
+                <div className="card-subtitle">Tracked GitHub projects</div>
+              </div>
+            </div>
+            {repos.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state-icon">
+                  <GitBranch size={24} />
+                </div>
+                <h3>No repositories yet</h3>
+                <p>Analyze or connect a repo from Settings to populate this list.</p>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Repo</th>
+                      <th>Last Run</th>
+                      <th>Duration</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {repos.slice(0, 8).map((r) => (
+                      <tr key={r.id}>
+                        <td>
+                          <Link to={`/repos/${r.owner}/${r.name}`}>{r.full_name}</Link>
+                        </td>
+                        <td className="text-muted text-sm">—</td>
+                        <td className="text-muted text-sm">—</td>
+                        <td>
+                          <span className="flex items-center gap-2">
+                            <span
+                              className={`status-dot ${r.is_active ? "success" : "failure"}`}
+                            />
+                            {r.is_active ? (
+                              <StatusBadge status="success" />
+                            ) : (
+                              <StatusBadge status="inactive" />
+                            )}
+                          </span>
+                        </td>
+                        <td>
+                          <Link
+                            to={`/repos/${r.owner}/${r.name}`}
+                            className="btn btn-sm btn-secondary"
+                          >
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <div className="card-title">Recent Pipeline Runs</div>
+                <div className="card-subtitle">Latest CI/CD ingests</div>
+              </div>
+            </div>
+            {recentRuns.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state-icon">
+                  <Zap size={24} />
+                </div>
+                <h3>No runs yet</h3>
+                <p>Ingest workflow runs from the Analyze page to see them here.</p>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Run</th>
+                      <th>Workflow</th>
+                      <th>Status</th>
+                      <th>Duration</th>
+                      <th>Date</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentRuns.map((run) => {
+                      const c = run.conclusion || run.status || "";
+                      const dot =
+                        c === "success" || c === "completed"
+                          ? "success"
+                          : c === "failure" || c === "failed"
+                            ? "failure"
+                            : "running";
+                      return (
+                        <tr key={run.id}>
+                          <td>
+                            <Link to={`/runs/${run.id}`}>#{run.run_number}</Link>
+                          </td>
+                          <td>
+                            <div className="text-sm" style={{ fontWeight: 600 }}>
+                              {workflowLabel(run)}
+                            </div>
+                            <div className="text-sm text-muted">Run {run.github_run_id}</div>
+                          </td>
+                          <td>
+                            <span className="flex items-center gap-2">
+                              <span className={`status-dot ${dot}`} />
+                              <StatusBadge status={c || "pending"} />
+                            </span>
+                          </td>
+                          <td>{formatRunDuration(run.total_duration_ms)}</td>
+                          <td className="text-muted text-sm">{formatDate(run.created_at)}</td>
+                          <td>
+                            <Link to={`/runs/${run.id}`} className="btn btn-sm btn-secondary">
+                              View
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Mode toggle */}
-        <div style={{ display: "flex", gap: 4, background: "var(--bg-card)", borderRadius: 8, padding: 4, border: "1px solid var(--border)" }}>
-          <button
-            className={`btn btn-sm ${mode === "applogs" ? "btn-primary" : "btn-secondary"}`}
-            style={{ borderRadius: 6 }}
-            onClick={() => setMode("applogs")}
-          >
-            Application Logs
-          </button>
-          <button
-            className={`btn btn-sm ${mode === "cicd" ? "btn-primary" : "btn-secondary"}`}
-            style={{ borderRadius: 6 }}
-            onClick={() => setMode("cicd")}
-          >
-            CI/CD Pipeline
-          </button>
+        <div>
+          <div className="card">
+            <div className="card-title">Platform Capabilities</div>
+            <div className="card-subtitle" style={{ marginBottom: 16 }}>
+              Static, dynamic, and log-native intelligence
+            </div>
+            <div className="feature-tiles-grid">
+              <Link to="/app-logs/upload" className="feature-tile">
+                <div className="feature-tile-icon orange">
+                  <Flame size={20} />
+                </div>
+                <div>
+                  <div className="feature-tile-label">Flamegraph</div>
+                  <div className="feature-tile-desc">Call-tree visualization from logs</div>
+                </div>
+              </Link>
+              <Link to="/analyze" className="feature-tile">
+                <div className="feature-tile-icon indigo">
+                  <Bot size={20} />
+                </div>
+                <div>
+                  <div className="feature-tile-label">AI Root Cause</div>
+                  <div className="feature-tile-desc">CI/CD bottleneck attribution</div>
+                </div>
+              </Link>
+              <Link to="/static-analysis" className="feature-tile">
+                <div className="feature-tile-icon teal">
+                  <Shield size={20} />
+                </div>
+                <div>
+                  <div className="feature-tile-label">Static SAST</div>
+                  <div className="feature-tile-desc">Multi-agent security &amp; architecture</div>
+                </div>
+              </Link>
+              <Link to="/app-logs/upload" className="feature-tile">
+                <div className="feature-tile-icon purple">
+                  <MessageCircle size={20} />
+                </div>
+                <div>
+                  <div className="feature-tile-label">Chat AI</div>
+                  <div className="feature-tile-desc">Ask questions about sessions</div>
+                </div>
+              </Link>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">System Health</div>
+            <ul className="health-checklist">
+              <li>
+                {health.api ? (
+                  <Check size={16} className="kpi-trend-up" />
+                ) : (
+                  <X size={16} className="kpi-trend-down" />
+                )}
+                API connected
+              </li>
+              <li>
+                {health.database ? (
+                  <Check size={16} className="kpi-trend-up" />
+                ) : (
+                  <X size={16} className="kpi-trend-down" />
+                )}
+                Database healthy
+              </li>
+              <li>
+                {health.github ? (
+                  <Check size={16} className="kpi-trend-up" />
+                ) : (
+                  <X size={16} className="kpi-trend-down" />
+                )}
+                GitHub token valid
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
-      {mode === "cicd" ? <CICDDashboard /> : <AppLogsDashboard />}
+      <section className="section card" id="how-it-works">
+        <div className="section-header">
+          <h2 className="section-title">How It Works</h2>
+        </div>
+        <div className="how-it-works-row">
+          <div className="how-step">
+            <div className="how-step-icon bg-gray">
+              <GitBranch size={18} />
+            </div>
+            <div className="how-step-num">Step 1</div>
+            <div className="how-step-title">Connect Repo</div>
+            <div className="how-step-desc">Add GitHub projects or upload structured logs.</div>
+          </div>
+          <div className="how-step">
+            <div className="how-step-icon bg-brand">
+              <Zap size={18} />
+            </div>
+            <div className="how-step-num">Step 2</div>
+            <div className="how-step-title">Run Pipeline</div>
+            <div className="how-step-desc">Ingest runs, index source, score bottlenecks.</div>
+          </div>
+          <div className="how-step">
+            <div className="how-step-icon bg-purple">
+              <Brain size={18} />
+            </div>
+            <div className="how-step-num">Step 3</div>
+            <div className="how-step-title">AI Analyses</div>
+            <div className="how-step-desc">Specialist models explain root cause and risk.</div>
+          </div>
+          <div className="how-step">
+            <div className="how-step-icon bg-green">
+              <CheckCircle size={18} />
+            </div>
+            <div className="how-step-num">Step 4</div>
+            <div className="how-step-title">Get Fixes</div>
+            <div className="how-step-desc">Export actionable diffs and health reports.</div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

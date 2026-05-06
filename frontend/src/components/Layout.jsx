@@ -1,190 +1,125 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Play, Settings, Upload } from "lucide-react";
-import { getActiveRegressions, getDashboardSummary, listAppSessions, listRepos } from "../services/api";
+import {
+  GitBranch,
+  LayoutDashboard,
+  Settings,
+  Shield,
+  Upload,
+  Zap,
+} from "lucide-react";
+import { getActiveRegressions } from "../services/api";
 
-const NAV_ITEMS = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/analyze", label: "Analyze Repo", icon: Play },
-  { path: "/settings", label: "Settings", icon: Settings },
-];
-
-const APP_LOG_NAV = [
-  { path: "/app-logs/upload", label: "Upload App Log", icon: Upload },
-];
+function navLinkClass(isActive) {
+  return isActive ? "active" : "";
+}
 
 export default function Layout({ children }) {
   const location = useLocation();
   const [alertCount, setAlertCount] = useState(0);
-  const [quickRepos, setQuickRepos] = useState([]);
-  const [quickApps, setQuickApps] = useState([]);
-  const [recentRuns, setRecentRuns] = useState([]);
+  const [apiOk, setApiOk] = useState(null);
 
   useEffect(() => {
-    getActiveRegressions().then((d) => setAlertCount((d || []).length)).catch(() => {});
-    listRepos()
-      .then((repos) => setQuickRepos((repos || []).slice(0, 4)))
-      .catch(() => {});
-    listAppSessions()
-      .then((sessions) => {
-        const seen = new Set();
-        const appNames = [];
-        for (const s of sessions || []) {
-          if (!seen.has(s.app_name)) {
-            seen.add(s.app_name);
-            appNames.push(s.app_name);
-          }
-          if (appNames.length >= 4) break;
-        }
-        setQuickApps(appNames);
-      })
-      .catch(() => {});
-    getDashboardSummary()
-      .then((summary) => setRecentRuns((summary?.recent_runs || []).slice(0, 4)))
+    getActiveRegressions()
+      .then((d) => setAlertCount((d || []).length))
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/health");
+        if (!cancelled) setApiOk(res.ok);
+      } catch {
+        if (!cancelled) setApiOk(false);
+      }
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const paths = useMemo(
+    () => ({
+      dashboard:
+        location.pathname === "/" || location.pathname.startsWith("/repos/"),
+      analyze:
+        location.pathname === "/analyze" || location.pathname.startsWith("/runs/"),
+      staticAnalysis: location.pathname === "/static-analysis",
+      uploadLog: location.pathname.startsWith("/app-logs"),
+      settings: location.pathname === "/settings",
+    }),
+    [location.pathname]
+  );
+
   return (
-    <div className="app-layout">
+    <div className="app-shell">
       <aside className="sidebar">
-        <div
-          style={{
-            padding: "14px 20px 14px",
-            borderBottom: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <div
-            style={{
-              width: 26,
-              height: 26,
-              background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
-              borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              flexShrink: 0,
-            }}
-          >
-            ⚡
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-mark">
+            <Zap size={18} strokeWidth={2.25} />
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              background: "linear-gradient(135deg,#818cf8,#a78bfa)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
-          >
-            DynamicAnalyser
+          <div>
+            <div className="sidebar-logo-text">CodeAnalyser</div>
+            <div className="sidebar-logo-sub">AI Platform</div>
           </div>
-        </div>
-        <ul className="sidebar-nav">
-          {NAV_ITEMS.map(({ path, label, icon: Icon }) => (
-            <li key={path}>
-              <Link
-                to={path}
-                className={location.pathname === path ? "active" : ""}
-              >
-                <Icon />
-                {label}
-                {path === "/" && alertCount > 0 && (
-                  <span
-                    style={{
-                      marginLeft: "auto",
-                      background: "rgba(239,68,68,.2)",
-                      color: "#ef4444",
-                      fontSize: 9,
-                      fontWeight: 700,
-                      padding: "1px 5px",
-                      borderRadius: 999,
-                    }}
-                  >
-                    {alertCount}
-                  </span>
-                )}
-              </Link>
-            </li>
-          ))}
-        </ul>
-        <div style={{ padding: "16px 0 4px 16px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", opacity: 0.7 }}>
-          App Logs
-        </div>
-        <ul className="sidebar-nav">
-          {APP_LOG_NAV.map(({ path, label, icon: Icon }) => (
-            <li key={path}>
-              <Link
-                to={path}
-                className={location.pathname === path ? "active" : ""}
-              >
-                <Icon />
-                {label}
-              </Link>
-            </li>
-          ))}
-        </ul>
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">Quick Access</div>
-          <ul className="sidebar-mini-nav">
-            {quickRepos.length > 0 &&
-              quickRepos.map((repo) => (
-                <li key={repo.id}>
-                  <Link to={`/repos/${repo.owner}/${repo.name}`} title={repo.full_name}>
-                    {repo.name}
-                  </Link>
-                </li>
-              ))}
-            {quickApps.length > 0 &&
-              quickApps.map((appName) => (
-                <li key={appName}>
-                  <Link to={`/app-logs/apps/${encodeURIComponent(appName)}`} title={appName}>
-                    {appName}
-                  </Link>
-                </li>
-              ))}
-            {quickRepos.length === 0 && quickApps.length === 0 && (
-              <li>
-                <span className="sidebar-mini-empty">No projects yet</span>
-              </li>
-            )}
-          </ul>
         </div>
 
-        <div className="sidebar-section" style={{ marginTop: 10 }}>
-          <div className="sidebar-section-title">Recent Runs</div>
-          <ul className="sidebar-mini-nav">
-            {recentRuns.length > 0 ? (
-              recentRuns.map((run) => (
-                <li key={run.id}>
-                  <Link to={`/runs/${run.id}`}>Run #{run.run_number}</Link>
-                </li>
-              ))
-            ) : (
-              <li>
-                <span className="sidebar-mini-empty">No runs yet</span>
-              </li>
-            )}
-          </ul>
-        </div>
-        <div style={{ marginTop: "auto", padding: 12, borderTop: "1px solid var(--border)" }}>
-          <div
-            style={{
-              background: alertCount > 0 ? "rgba(239,68,68,.07)" : "rgba(34,197,94,.07)",
-              border: `1px solid ${alertCount > 0 ? "rgba(239,68,68,.2)" : "rgba(34,197,94,.2)"}`,
-              borderRadius: 6,
-              padding: "6px 8px",
-            }}
-          >
-            <div style={{ fontSize: 9, color: alertCount > 0 ? "#ef4444" : "#22c55e", fontWeight: 700 }}>
-              FLEET STATUS
-            </div>
-            <div style={{ fontSize: 10, color: "#64748b", marginTop: 1 }}>
-              {alertCount === 0 ? "✓ No active regressions" : `⚠ ${alertCount} regression(s)`}
-            </div>
+        <div className="sidebar-section-label">Analysis</div>
+        <ul className="sidebar-nav">
+          <li className="sidebar-nav-item">
+            <Link to="/" className={navLinkClass(paths.dashboard)}>
+              <LayoutDashboard size={16} strokeWidth={1.75} />
+              Dashboard
+              {alertCount > 0 && <span className="sidebar-badge">{alertCount}</span>}
+            </Link>
+          </li>
+          <li className="sidebar-nav-item">
+            <Link to="/analyze" className={navLinkClass(paths.analyze)}>
+              <GitBranch size={16} strokeWidth={1.75} />
+              Analyze Repo
+            </Link>
+          </li>
+          <li className="sidebar-nav-item">
+            <Link to="/static-analysis" className={navLinkClass(paths.staticAnalysis)}>
+              <Shield size={16} strokeWidth={1.75} />
+              Static Analysis
+            </Link>
+          </li>
+        </ul>
+
+        <div className="sidebar-section-label">App logs</div>
+        <ul className="sidebar-nav">
+          <li className="sidebar-nav-item">
+            <Link to="/app-logs/upload" className={navLinkClass(paths.uploadLog)}>
+              <Upload size={16} strokeWidth={1.75} />
+              Upload Log
+            </Link>
+          </li>
+        </ul>
+
+        <div className="sidebar-section-label">System</div>
+        <ul className="sidebar-nav">
+          <li className="sidebar-nav-item">
+            <Link to="/settings" className={navLinkClass(paths.settings)}>
+              <Settings size={16} strokeWidth={1.75} />
+              Settings
+            </Link>
+          </li>
+        </ul>
+
+        <div className="sidebar-footer">
+          <div className="api-status-pill">
+            <span className={`api-status-dot ${apiOk ? "ok" : "bad"}`} />
+            {apiOk === null
+              ? "Checking API…"
+              : apiOk
+                ? "API Connected"
+                : "API Offline"}
           </div>
         </div>
       </aside>
