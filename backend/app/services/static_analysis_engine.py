@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -357,7 +358,7 @@ class StaticAnalysisEngine:
             store.update_failed(report_id, "ANTHROPIC_API_KEY not configured")
             return
 
-        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=6)
         model = settings.LLM_MODEL
         max_out = settings.STATIC_ANALYSIS_LLM_MAX_TOKENS
         max_per_domain = settings.STATIC_ANALYSIS_MAX_FILES_PER_DOMAIN
@@ -367,6 +368,7 @@ class StaticAnalysisEngine:
         total_ct = 0
         all_issues: list[dict[str, Any]] = []
         domain_stats: dict[str, Any] = {}
+        _domain_call_count = 0
 
         for dom in _DOMAINS_ORDER:
             payloads = domain_payloads.get(dom) or []
@@ -409,6 +411,9 @@ class StaticAnalysisEngine:
                 ]
             )
 
+            if _domain_call_count > 0:
+                time.sleep(3)
+            _domain_call_count += 1
             try:
                 resp = client.messages.create(
                     model=model,

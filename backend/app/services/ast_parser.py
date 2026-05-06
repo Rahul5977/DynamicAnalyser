@@ -144,6 +144,15 @@ LANGUAGE_CONFIG = {
         "module": "tree_sitter_javascript",
         "log_patterns": JS_LOG_PATTERNS,
         "func_node_types": ["function_declaration", "method_definition"],
+        "arrow_func_value_types": ["arrow_function", "function_expression", "function"],
+        "class_node_type": "class_declaration",
+        "call_node_type": "call_expression",
+    },
+    ".jsx": {
+        "module": "tree_sitter_javascript",
+        "log_patterns": JS_LOG_PATTERNS,
+        "func_node_types": ["function_declaration", "method_definition"],
+        "arrow_func_value_types": ["arrow_function", "function_expression", "function"],
         "class_node_type": "class_declaration",
         "call_node_type": "call_expression",
     },
@@ -152,6 +161,7 @@ LANGUAGE_CONFIG = {
         "ts_variant": "typescript",
         "log_patterns": JS_LOG_PATTERNS,
         "func_node_types": ["function_declaration", "method_definition"],
+        "arrow_func_value_types": ["arrow_function", "function_expression", "function"],
         "class_node_type": "class_declaration",
         "call_node_type": "call_expression",
     },
@@ -160,6 +170,7 @@ LANGUAGE_CONFIG = {
         "ts_variant": "tsx",
         "log_patterns": JS_LOG_PATTERNS,
         "func_node_types": ["function_declaration", "method_definition"],
+        "arrow_func_value_types": ["arrow_function", "function_expression", "function"],
         "class_node_type": "class_declaration",
         "call_node_type": "call_expression",
     },
@@ -274,6 +285,8 @@ class ASTParser:
         ext = os.path.splitext(file_path)[1]
         lang = ext.lstrip(".")
 
+        arrow_value_types = config.get("arrow_func_value_types", [])
+
         def _walk(node, class_name: str | None = None):
             # Check for class definitions to build qualified names
             if config.get("class_node_type") and node.type == config["class_node_type"]:
@@ -288,6 +301,32 @@ class ASTParser:
                     qualified = f"{class_name}.{name}" if class_name else name
                     calls = self._extract_calls_in_body(
                         node, source_bytes, config["call_node_type"]
+                    )
+                    functions.append(FunctionInfo(
+                        name=name,
+                        qualified_name=qualified,
+                        file_path=file_path,
+                        line_number=node.start_point.row + 1,
+                        end_line_number=node.end_point.row + 1,
+                        calls=calls,
+                        language=lang,
+                    ))
+
+            # Capture arrow functions / function expressions assigned to variables:
+            # const foo = () => {}  |  const bar = function() {}
+            elif arrow_value_types and node.type == "variable_declarator":
+                name_node = next(
+                    (c for c in node.children if c.type == "identifier"), None
+                )
+                value_node = next(
+                    (c for c in reversed(node.children) if c.type in arrow_value_types),
+                    None,
+                )
+                if name_node and value_node:
+                    name = name_node.text.decode("utf-8")
+                    qualified = f"{class_name}.{name}" if class_name else name
+                    calls = self._extract_calls_in_body(
+                        value_node, source_bytes, config["call_node_type"]
                     )
                     functions.append(FunctionInfo(
                         name=name,

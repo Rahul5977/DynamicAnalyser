@@ -17,6 +17,7 @@ from app.models.schemas import (
     StaticDomainChunk,
 )
 from app.core.exceptions import DatabaseError
+from app.services.github_client import GitHubClient
 from app.services.static_analysis_engine import (
     resolve_commit_sha,
     resolve_github_target,

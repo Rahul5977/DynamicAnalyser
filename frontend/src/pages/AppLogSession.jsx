@@ -661,11 +661,15 @@ function TimeBreakdown({ calls, totalMs, sourceRepo }) {
 // ── Source trace panel ────────────────────────────────────────────────────────
 
 function SourceTrace({ sessionId, sourceRepo }) {
-  const [trace, setTrace]       = useState(null);
-  const [loading, setLoading]   = useState(false);
-  const [indexing, setIndexing] = useState(false);
-  const [error, setError]       = useState(null);
-  const [ghUrl, setGhUrl]       = useState(sourceRepo || "");
+  const [trace, setTrace]         = useState(null);
+  const [loading, setLoading]     = useState(false);
+  const [indexing, setIndexing]   = useState(false);
+  const [error, setError]         = useState(null);
+  const [ghUrl, setGhUrl]         = useState(sourceRepo || "");
+  // Track whether the user successfully linked a repo in this session
+  const [linkedRepo, setLinkedRepo] = useState(sourceRepo || "");
+
+  const effectiveRepo = linkedRepo || sourceRepo;
 
   const loadTrace = async () => {
     setLoading(true); setError(null);
@@ -676,7 +680,11 @@ function SourceTrace({ sessionId, sourceRepo }) {
 
   const handleIndex = async () => {
     setIndexing(true); setError(null);
-    try { await indexSourceForSession(sessionId, ghUrl); await loadTrace(); }
+    try {
+      await indexSourceForSession(sessionId, ghUrl);
+      setLinkedRepo(ghUrl);
+      await loadTrace();
+    }
     catch (e) { setError(e.message); }
     finally { setIndexing(false); }
   };
@@ -687,14 +695,14 @@ function SourceTrace({ sessionId, sourceRepo }) {
         <div className="card-title" style={{ margin: 0 }}>Source Correlation</div>
         <button
           className="btn btn-sm btn-secondary"
-          onClick={sourceRepo ? handleIndex : loadTrace}
-          disabled={loading || indexing || (!sourceRepo && !ghUrl)}
+          onClick={effectiveRepo ? handleIndex : loadTrace}
+          disabled={loading || indexing || (!effectiveRepo && !ghUrl)}
         >
           {indexing ? "Indexing…" : loading ? "Loading…" : "Correlate"}
         </button>
       </div>
 
-      {!sourceRepo && (
+      {!effectiveRepo && (
         <div style={{ marginTop: 12 }}>
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
             No source repo linked. Add a GitHub URL to map slow functions to source lines.
