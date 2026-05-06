@@ -424,3 +424,19 @@ class RegressionAlert(Base):
     __table_args__ = (
         Index("ix_regression_app", "app_name", "resolved"),
     )
+
+
+class StaticAnalysisJob(Base):
+    __tablename__ = "static_analysis_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(64), unique=True, index=True, nullable=False)
+    repo_url = Column(String(1024), nullable=False)
+    status = Column(String(32), default="pending", nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    report_json = Column(Text, nullable=True)
+    health_score = Column(Integer, nullable=True)
+    finding_count = Column(Integer, nullable=True)
+    primary_language = Column(String(64), nullable=True)

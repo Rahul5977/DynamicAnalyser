@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     APP_LOG_UPLOAD_DIR: str = "./uploads/app_logs"
     APP_LOG_MAX_SIZE_MB: int = 50
 
+    # Static Analysis
+    STATIC_ANALYSIS_TEMP_DIR: str = "./temp/static_analysis"
+    STATIC_ANALYSIS_MAX_FILES: int = 300
+    STATIC_ANALYSIS_COUNCIL_MODEL: str = "claude-sonnet-4-6"
+    STATIC_ANALYSIS_MAX_CHUNK_LINES: int = 100
+    STATIC_COUNCIL_TEMPERATURE: float = 0.3
+    STATIC_MAX_REINVESTIGATIONS: int = 1
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

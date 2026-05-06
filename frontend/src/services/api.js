@@ -141,3 +141,31 @@ export const getAppBenchmark = (appName) =>
   request(`/benchmarks/app-sessions?app_name=${encodeURIComponent(appName)}`);
 
 export const getFleetSummary = () => request("/benchmarks/fleet-summary");
+
+export async function triggerStaticAnalysis(repoUrl) {
+  const r = await fetch(`${BASE}/static/analyse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_url: repoUrl }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function getStaticJob(jobId) {
+  const r = await fetch(`${BASE}/static/jobs/${jobId}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function getStaticReport(jobId) {
+  const r = await fetch(`${BASE}/static/report/${jobId}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function listStaticJobs() {
+  const r = await fetch(`${BASE}/static/jobs`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

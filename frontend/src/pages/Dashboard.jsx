@@ -7,6 +7,7 @@ import {
   Flame,
   GitBranch,
   MessageCircle,
+  Shield,
   TrendingUp,
   Zap,
 } from "lucide-react";
@@ -475,6 +476,9 @@ export default function Dashboard() {
             <Link to="/analyze" className="btn btn-secondary hero-cta-secondary">
               <GitBranch size={15} /> Analyze GitHub Repo
             </Link>
+            <Link to="/static-analysis" className="btn btn-secondary hero-cta-secondary">
+              <Shield size={15} /> Static Analysis
+            </Link>
           </div>
         </div>
 
@@ -515,6 +519,13 @@ export default function Dashboard() {
             <Link className="hero-feature-item clickable" to="/settings">
               <Brain size={15} />
               <div className="hero-feature-copy"><strong>Self-Learning</strong><span>Improves with feedback</span></div>
+            </Link>
+            <Link className="hero-feature-item clickable" to="/static-analysis">
+              <Shield size={15} />
+              <div className="hero-feature-copy">
+                <strong>SAST Scanner</strong>
+                <span>Multi-agent code security</span>
+              </div>
             </Link>
           </div>
         </div>
