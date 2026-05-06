@@ -422,9 +422,28 @@ class ASTParser:
     @staticmethod
     def _get_node_name(node, source_bytes: bytes) -> str | None:
         """Extract the name identifier from a function/class node."""
+        # Fast path for direct children (works for most languages).
         for child in node.children:
             if child.type in ("identifier", "property_identifier", "name"):
                 return child.text.decode("utf-8")
+
+        # C/C-header function nodes often nest the function identifier under
+        # function_declarator / pointer_declarator / declarator.
+        if node.type in ("function_definition", "declaration"):
+            stack = list(node.children)
+            while stack:
+                cur = stack.pop(0)
+                if cur.type in ("identifier", "property_identifier", "name"):
+                    return cur.text.decode("utf-8")
+                stack.extend(list(cur.children))
+
+        # Generic fallback: nested identifier search for any remaining grammar.
+        stack = list(node.children)
+        while stack:
+            cur = stack.pop(0)
+            if cur.type in ("identifier", "property_identifier", "name"):
+                return cur.text.decode("utf-8")
+            stack.extend(list(cur.children))
         return None
 
     @staticmethod

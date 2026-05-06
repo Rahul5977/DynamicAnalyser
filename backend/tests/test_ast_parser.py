@@ -130,6 +130,17 @@ class TestUnsupportedAndEdgeCases:
         # Should not raise, may find partial results
         assert isinstance(functions, list)
 
+    def test_c_function_definition_name_extraction(self, parser):
+        c_source = """
+        static int dissect_nas_attach_request(tvbuff_t *tvb) {
+            return 0;
+        }
+        """
+        functions, _ = parser.parse_file(c_source, "epan/dissectors/packet-nas-eps.c")
+        if not functions:
+            pytest.skip("tree-sitter-c not installed in this environment")
+        assert any(f.name == "dissect_nas_attach_request" for f in functions)
+
 
 class TestCodeIndexerGraphs:
     def test_build_call_graph(self, parser, python_source):
