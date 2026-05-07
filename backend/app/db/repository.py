@@ -329,6 +329,15 @@ class CodeIndexRepository:
         log_calls: list[IndexedLogCall],
     ):
         try:
+            # Clear any prior rows for this index to prevent duplicate accumulation
+            # on retried builds.
+            self.db.query(IndexedFunction).filter(
+                IndexedFunction.code_index_id == index_id
+            ).delete(synchronize_session=False)
+            self.db.query(IndexedLogCall).filter(
+                IndexedLogCall.code_index_id == index_id
+            ).delete(synchronize_session=False)
+
             for f in functions:
                 f.code_index_id = index_id
                 self.db.add(f)

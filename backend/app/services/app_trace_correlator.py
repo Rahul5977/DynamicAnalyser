@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -61,6 +62,16 @@ _TOKEN_ALIASES = {
     "security": "sec",
     "information": "info",
     "authentication": "auth",
+    # TLS/SSL — Wireshark historically named TLS as "ssl" internally
+    "tls": "ssl",
+    "ssl": "tls",
+    # Wireshark analysis function naming conventions
+    "analysis": "analyze",
+    "analyze": "analysis",
+    "retransmission": "retransmit",
+    "retransmit": "retransmission",
+    "check": "verify",
+    "segment": "seq",
 }
 
 
@@ -115,6 +126,44 @@ def _path_substrings_for_label(log_label: str) -> list[str] | None:
 def _file_matches_path_hint(file_path: str, substrings: list[str]) -> bool:
     fp = file_path.lower()
     return any(s.lower() in fp for s in substrings)
+
+
+def _canonical_file_score(func_name: str, file_path: str) -> int:
+    """
+    Score how "canonical" a file is for a given function name.
+
+    When many files define the same symbol (e.g. every Wireshark dissector
+    declares a local ``dissect_tcp`` wrapper), we need to pick the one most
+    likely to be the *main* implementation.  Strategy:
+      +3  file's stem exactly equals the protocol token(s) from the name
+      +2  file's stem contains all protocol tokens
+      +1  any protocol token appears anywhere in the path
+      -1  file is a header (.h) — prefer .c source
+    Examples:
+      ``dissect_tcp`` vs ``packet-tcp.c``    →  +3  ✓
+      ``dissect_tcp`` vs ``packet-synphasor.c`` → 0  ✗
+      ``dissect_frame`` vs ``packet-frame.c``   →  +3  ✓
+    """
+    # Extract the protocol portion: strip leading "dissect_", "diameter_", etc.
+    proto_raw = re.sub(r"^(dissect|tcp|diameter|gtpv[12])_+", "", func_name, flags=re.I)
+    tokens = [t for t in re.split(r"[^a-z0-9]+", proto_raw.lower()) if len(t) > 1]
+    if not tokens:
+        return 0
+
+    stem = os.path.splitext(os.path.basename(file_path))[0].lower()
+    # strip "packet-" prefix common in Wireshark
+    stem_clean = re.sub(r"^packet-", "", stem)
+
+    score = 0
+    if all(t in stem_clean for t in tokens):
+        score += 3 if stem_clean == "_".join(tokens) or stem_clean == tokens[0] else 2
+    else:
+        if any(t in file_path.lower() for t in tokens):
+            score += 1
+
+    if file_path.endswith(".h"):
+        score -= 1
+    return score
 
 
 def _token_overlap_score(log_label: str, symbol_name: str) -> float:
@@ -191,19 +240,32 @@ class AppTraceCorrelator:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-        # Correlate each call
+        # ── Deduplicated match: compute _match_function once per unique name ──
+        # A log file with 46 K calls typically has only ~20-50 unique function
+        # names.  Running fuzzy matching on every single call row would be
+        # O(total_calls × index_size) — e.g. 46,873 × 8,000 = 374 M difflib
+        # ops.  Caching by name reduces this to O(unique_names × index_size).
+        unique_log_names: list[str] = list({c.function_name for c in calls})
+        match_cache: dict[str, tuple[IndexedFunction | None, str | None, list[dict]]] = {}
+
+        for log_name in unique_log_names:
+            best, method = self._match_function(
+                log_name, func_by_name, func_by_norm, indexed_funcs
+            )
+            chain: list[dict] = []
+            if best:
+                chain = self._build_call_chain(best.function_name, reverse_cg, indexed_funcs)
+            match_cache[log_name] = (best, method, chain)
+
+        # Apply cached results to every call row
         matched = 0
         correlated: list[CorrelatedCall] = []
 
         for call in calls:
-            best, method = self._match_function(
-                call.function_name, func_by_name, func_by_norm, indexed_funcs
-            )
+            best, method, chain = match_cache[call.function_name]
 
-            chain: list[dict] = []
             if best:
                 matched += 1
-                chain = self._build_call_chain(best.function_name, reverse_cg, indexed_funcs)
                 # Write back to DB
                 call.source_function = best.function_name
                 call.source_file     = best.file_path
@@ -269,11 +331,21 @@ class AppTraceCorrelator:
         if not code_index:
             return None, []
 
-        funcs = (
+        funcs_raw = (
             self.db.query(IndexedFunction)
             .filter(IndexedFunction.code_index_id == code_index.id)
             .all()
         )
+        # Deduplicate by (function_name, file_path) — duplicate rows can
+        # accumulate when re-indexing is retried without clearing prior rows.
+        seen: set[tuple[str, str]] = set()
+        funcs: list[IndexedFunction] = []
+        for f in funcs_raw:
+            key = (f.function_name, f.file_path)
+            if key not in seen:
+                seen.add(key)
+                funcs.append(f)
+
         return code_index, funcs
 
     def _match_function(
@@ -284,14 +356,24 @@ class AppTraceCorrelator:
         all_funcs: list[IndexedFunction],
     ) -> tuple[IndexedFunction | None, str | None]:
         """Try exact → normalised → fuzzy matching."""
-        # 1. Exact
+        # 1. Exact — when multiple files define the same symbol, prefer the
+        #    most canonical file (e.g. packet-tcp.c over packet-synphasor.c
+        #    for dissect_tcp).
         if target in by_name:
-            return by_name[target][0], "exact"
+            candidates = by_name[target]
+            if len(candidates) == 1:
+                return candidates[0], "exact"
+            best = max(candidates, key=lambda fn: _canonical_file_score(target, fn.file_path))
+            return best, "exact"
 
-        # 2. Normalised
+        # 2. Normalised — same file preference
         norm = _normalise(target)
         if norm in by_norm:
-            return by_norm[norm][0], "normalised"
+            candidates = by_norm[norm]
+            if len(candidates) == 1:
+                return candidates[0], "normalised"
+            best = max(candidates, key=lambda fn: _canonical_file_score(target, fn.file_path))
+            return best, "normalised"
 
         # 3. Fuzzy — scan a larger prefix (order is DB-defined; cap for CPU)
         threshold = self._settings.FUZZY_MATCH_THRESHOLD
