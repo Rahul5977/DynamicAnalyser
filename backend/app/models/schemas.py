@@ -102,6 +102,12 @@ class IndexRepoRequest(BaseModel):
         description="Absolute path to a local git clone (reads from disk). "
         "Requires AST_INDEX_LOCAL_ROOT; path must resolve under it.",
     )
+    local_repo_subdir: str | None = Field(
+        None,
+        description="Optional subdirectory relative to local_repo_path to restrict "
+        "indexing scope (e.g. 'epan/dissectors' for Wireshark). "
+        "Reduces indexing time dramatically for large repos.",
+    )
 
 
 # ── Phase 2 Response Schemas ─────────────────────────────────────

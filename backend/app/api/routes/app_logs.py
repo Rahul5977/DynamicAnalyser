@@ -345,6 +345,7 @@ def index_source_for_session(
         idx_req = IndexRepoRequest(
             commit_sha=(payload.get("commit_sha") or None),
             local_repo_path=(payload.get("local_repo_path") or None),
+            local_repo_subdir=(payload.get("local_repo_subdir") or None),
         )
         result = index_repo_for_tracked_repo(
             owner=owner, name=name, request=idx_req, db=db

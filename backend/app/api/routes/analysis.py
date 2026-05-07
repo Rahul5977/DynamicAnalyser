@@ -115,8 +115,12 @@ def index_repo(
         # Build the index
         try:
             indexer = CodeIndexer(github)
+            local_subdir = (request.local_repo_subdir or "").strip() if request else ""
             index_data = indexer.build_index(
-                full_name, commit_sha, local_root=local_resolved
+                full_name,
+                commit_sha,
+                local_root=local_resolved,
+                local_repo_subdir=local_subdir or None,
             )
 
             # Persist functions and log calls

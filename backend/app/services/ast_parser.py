@@ -4,8 +4,10 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import tree_sitter
 
@@ -206,6 +208,44 @@ LANGUAGE_CONFIG = {
         "call_node_type": "call_expression",
     },
 }
+
+
+# ── Parallel worker (module-level so ProcessPoolExecutor can pickle it) ──────
+
+def _parse_file_batch_worker(
+    batch: list[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """
+    Parse a batch of source files in a subprocess worker.
+
+    Each element of *batch* is ``(full_filesystem_path, relative_repo_path)``.
+    Returns a list of plain dicts that are safe to pickle back to the parent:
+    one dict per extracted function, plus one sentinel dict per errored file.
+    """
+    parser = ASTParser()
+    results: list[dict[str, Any]] = []
+    for full_path, repo_path in batch:
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError:
+            results.append({"_error": True})
+            continue
+        try:
+            funcs, _ = parser.parse_file(content, repo_path)
+            for f in funcs:
+                results.append({
+                    "name": f.name,
+                    "qualified_name": f.qualified_name,
+                    "file_path": f.file_path,
+                    "line_number": f.line_number,
+                    "end_line_number": f.end_line_number,
+                    "calls": f.calls,
+                    "language": f.language,
+                })
+        except Exception:
+            results.append({"_error": True})
+    return results
 
 
 # ── AST Parser ───────────────────────────────────────────────────
@@ -541,12 +581,31 @@ class CodeIndexer:
         self.parser = parser or ASTParser()
         self._settings = get_settings()
 
-    def _list_local_source_files(self, local_root: str) -> list[dict]:
-        """Paths relative to repo root (posix-style), with size in bytes."""
+    def _list_local_source_files(
+        self,
+        local_root: str,
+        subdir: str | None = None,
+    ) -> list[dict]:
+        """
+        Return source files relative to repo root (posix-style), with size.
+
+        Args:
+            local_root: absolute path to the repo root.
+            subdir:     optional subdirectory *relative to local_root* to
+                        restrict the walk to (e.g. ``"epan/dissectors"``).
+                        Accepts both forward and back-slashes; any leading
+                        slashes are stripped.
+        """
         max_bytes = self._settings.AST_INDEX_MAX_FILE_SIZE_KB * 1024
         base = Path(local_root).resolve()
+
+        if subdir:
+            walk_root = base / subdir.lstrip("/\\").replace("\\", "/")
+        else:
+            walk_root = base
+
         out: list[dict] = []
-        for dirpath, dirnames, filenames in os.walk(local_root):
+        for dirpath, dirnames, filenames in os.walk(walk_root):
             dirnames[:] = [d for d in dirnames if d != ".git"]
             for fn in filenames:
                 ext = os.path.splitext(fn)[1]
@@ -573,15 +632,24 @@ class CodeIndexer:
         commit_sha: str,
         *,
         local_root: str | None = None,
+        local_repo_subdir: str | None = None,
     ) -> CodeIndexData:
-        """Build a complete code index from GitHub blobs or a local clone."""
+        """
+        Build a complete code index from GitHub blobs or a local clone.
+
+        Args:
+            local_repo_subdir: optional subdirectory relative to *local_root*
+                to restrict indexing to (e.g. ``"epan/dissectors"`` for
+                Wireshark).  Ignored when using GitHub.
+        """
         sha_short = commit_sha[:8] if commit_sha else "?"
         if local_root:
+            subdir_info = f" (subdir={local_repo_subdir})" if local_repo_subdir else ""
             logger.info(
-                "Building code index from local tree %s for %s @ %s",
-                local_root, repo_full_name, sha_short,
+                "Building code index from local tree %s%s for %s @ %s",
+                local_root, subdir_info, repo_full_name, sha_short,
             )
-            source_files = self._list_local_source_files(local_root)
+            source_files = self._list_local_source_files(local_root, subdir=local_repo_subdir)
         else:
             if not self.github:
                 raise IndexingError(
@@ -616,53 +684,101 @@ class CodeIndexer:
         errors = 0
         base_path = Path(local_root).resolve() if local_root else None
 
-        _prev_recursion = sys.getrecursionlimit()
-        try:
-            sys.setrecursionlimit(max(_prev_recursion, 25_000))
+        if local_root and base_path is not None:
+            # ── Parallel path (local clone) ────────────────────────────────
+            # Build a list of (full_fs_path, relative_repo_path) for each file,
+            # validating that the resolved path stays inside the clone root.
+            valid_pairs: list[tuple[str, str]] = []
             for file_info in source_files:
                 path = file_info["path"]
-                ext = os.path.splitext(path)[1]
-                lang = ext.lstrip(".")
-
+                full_file = (base_path / path).resolve()
                 try:
-                    if local_root and base_path is not None:
-                        full_file = (base_path / path).resolve()
+                    full_file.relative_to(base_path)
+                except ValueError:
+                    logger.warning("Skipping path outside clone root: %s", path)
+                    errors += 1
+                    continue
+                valid_pairs.append((str(full_file), path))
+
+            # Split into batches; use up to 4 worker processes.
+            cpu_count = os.cpu_count() or 4
+            workers = min(cpu_count, 4)
+            batch_size = max(1, len(valid_pairs) // (workers * 4))
+            batches = [
+                valid_pairs[i : i + batch_size]
+                for i in range(0, len(valid_pairs), batch_size)
+            ]
+
+            logger.info(
+                "Parallel AST parse: %d files → %d batches × %d workers",
+                len(valid_pairs), len(batches), workers,
+            )
+
+            _prev_recursion = sys.getrecursionlimit()
+            sys.setrecursionlimit(max(_prev_recursion, 25_000))
+            try:
+                with ProcessPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(_parse_file_batch_worker, b): b for b in batches}
+                    for fut in as_completed(futures):
                         try:
-                            full_file.relative_to(base_path)
-                        except ValueError:
-                            logger.warning("Skipping path outside clone root: %s", path)
+                            batch_results = fut.result()
+                        except Exception as exc:
+                            logger.warning("Worker batch failed: %s", exc)
                             errors += 1
                             continue
-                        with open(
-                            full_file, "r", encoding="utf-8", errors="replace"
-                        ) as fh:
-                            content = fh.read()
-                    else:
+                        for item in batch_results:
+                            if item.get("_error"):
+                                errors += 1
+                                continue
+                            ext = os.path.splitext(item["file_path"])[1]
+                            lang = ext.lstrip(".")
+                            all_functions.append(FunctionInfo(
+                                name=item["name"],
+                                qualified_name=item["qualified_name"],
+                                file_path=item["file_path"],
+                                line_number=item["line_number"],
+                                end_line_number=item["end_line_number"],
+                                calls=item["calls"],
+                                language=lang,
+                            ))
+                            language_counts[lang] = language_counts.get(lang, 0) + 1
+            finally:
+                sys.setrecursionlimit(_prev_recursion)
+
+        else:
+            # ── Sequential path (GitHub API) ───────────────────────────────
+            _prev_recursion = sys.getrecursionlimit()
+            try:
+                sys.setrecursionlimit(max(_prev_recursion, 25_000))
+                for file_info in source_files:
+                    path = file_info["path"]
+                    ext = os.path.splitext(path)[1]
+                    lang = ext.lstrip(".")
+                    try:
                         content = self.github.get_file_contents(
                             repo_full_name, path, ref=commit_sha
                         )
-                except Exception as e:
-                    logger.warning("Failed to read %s: %s", path, e)
-                    errors += 1
-                    continue
-
-                try:
-                    functions, log_calls = self.parser.parse_file(content, path)
-                    all_functions.extend(functions)
-                    all_log_calls.extend(log_calls)
-                    language_counts[lang] = language_counts.get(lang, 0) + 1
-                except RecursionError:
-                    logger.warning(
-                        "Recursion depth exceeded parsing %s — skipping file", path
-                    )
-                    errors += 1
-                    continue
-                except ASTParseError as e:
-                    logger.warning("Failed to parse %s: %s", path, e.message)
-                    errors += 1
-                    continue
-        finally:
-            sys.setrecursionlimit(_prev_recursion)
+                    except Exception as e:
+                        logger.warning("Failed to read %s: %s", path, e)
+                        errors += 1
+                        continue
+                    try:
+                        functions, log_calls = self.parser.parse_file(content, path)
+                        all_functions.extend(functions)
+                        all_log_calls.extend(log_calls)
+                        language_counts[lang] = language_counts.get(lang, 0) + 1
+                    except RecursionError:
+                        logger.warning(
+                            "Recursion depth exceeded parsing %s — skipping file", path
+                        )
+                        errors += 1
+                        continue
+                    except ASTParseError as e:
+                        logger.warning("Failed to parse %s: %s", path, e.message)
+                        errors += 1
+                        continue
+            finally:
+                sys.setrecursionlimit(_prev_recursion)
 
         call_graph = self._build_call_graph(all_functions)
         reverse_graph = self._build_reverse_graph(call_graph)
